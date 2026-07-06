@@ -74,16 +74,13 @@ func TestBeaconDiscoveryFlow(t *testing.T) {
 	var aliceCID [32]byte
 	copy(aliceCID[:], aliceChainID[:])
 
-	resp, err := beacon.BuildResponse(inner, aliceCID, aliceIPv6, 9070, aliceEph.Public, alice.SendKey.Private)
+	resp, err := beacon.BuildResponse(inner, aliceCID, aliceIPv6, 9070, aliceEph.Public, alice.SendKey.Private, &bob.RecvKey.Public)
 	if err != nil {
 		t.Fatalf("build response: %v", err)
 	}
 
-	// 用 Bob 的 recv_pk 加密响应
-	encryptedPayload, err := crypto.KEMEncrypt(&bob.RecvKey.Public, resp.EncryptedPayload)
-	if err != nil {
-		t.Fatalf("encrypt response: %v", err)
-	}
+	// 直接使用已加密响应
+	encryptedPayload := resp.EncryptedPayload
 
 	// === 阶段 4：Bob 验证响应 ===
 	var expectedNonce [32]byte
@@ -166,7 +163,7 @@ func TestNoiseFrameIntegration(t *testing.T) {
 
 	// IK 握手
 	bobHS := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
-	aliceHS := noise.NewResponderIK(aliceKey, nil, noise.RoleFriend)
+	aliceHS := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend)
 
 	msg1, _ := bobHS.WriteMessage(nil)
 	aliceHS.ReadMessage(msg1)

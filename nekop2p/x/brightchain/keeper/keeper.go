@@ -300,7 +300,9 @@ func (k *Keeper) CreditSalary(ctx types.Context, address string, amount uint64) 
 	if block == nil {
 		return fmt.Errorf("user not found: %s", address)
 	}
-	block.TotalRepayAmount += amount
+	// 工资计入独立字段，不混入 TotalRepayAmount (防止正反馈循环)
+	block.SalaryEarnings += amount
+	// CreditLimit 仍可增长 — 节点工作应获得借贷能力
 	block.CreditLimit += amount
 	data := mustMarshal(block)
 	return k.store.Write(func(tx *store.Tx) error { return tx.PutUser(string(chainID[:]), data) })

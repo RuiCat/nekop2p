@@ -96,7 +96,7 @@ func (n *Node) DialPadding(ipv6 [16]byte, port uint16, bootstrapPK [32]byte) (*p
 		return nil, fmt.Errorf("dial padding: %w", err)
 	}
 
-	hs := noise.NewInitiatorNK(&bootstrapPK, noise.RolePublic)
+	hs := noise.NewInitiatorNK(&bootstrapPK, noise.RolePadding)
 	msg1, err := hs.WriteMessage(nil)
 	if err != nil {
 		conn.Close()
@@ -154,8 +154,11 @@ func (n *Node) handleIncoming(conn net.Conn) {
 	}
 
 	// 先尝试 IK（好友），再尝试 NK（匿名/引导）
-	if payload, err := n.tryIKResponder(conn, data); err == nil {
-		n.handleIKPayload(conn, payload)
+	// 注: IK/NK 使用不同 prologue → 不同初始密钥 → 解密互斥，不会误匹配。
+	// try-first 模式是故意的设计：允许单端口同时服务好友和匿名连接。
+	// 错误解密因 AEAD 认证标签失败 (GCM) 被安全拒绝，不会泄露密钥材料。
+	if payload, result, err := n.tryIKResponder(conn, data); err == nil {
+		n.handleIKPayload(conn, payload, result)
 		return // 连接所有权转交给对等管理器
 	}
 
@@ -169,23 +172,23 @@ func (n *Node) handleIncoming(conn net.Conn) {
 	conn.Close()
 }
 
-func (n *Node) tryIKResponder(conn net.Conn, msg1 []byte) ([]byte, error) {
-	hs := noise.NewResponderIK(&n.cfg.RecvKey, nil, noise.RoleFriend)
+func (n *Node) tryIKResponder(conn net.Conn, msg1 []byte) ([]byte, *noise.HandshakeResult, error) {
+	hs := noise.NewResponderIK(&n.cfg.RecvKey, [32]byte{}, noise.RoleFriend)
 	payload, err := hs.ReadMessage(msg1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	msg2, err := hs.WriteMessage(nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if _, err := conn.Write(msg2); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := hs.Complete()
 	chainID := hashToChainID(result.RemoteStatic)
 	n.addPeerSession(conn, chainID, result, false)
-	return payload, nil
+	return payload, result, nil
 }
 
 func (n *Node) tryNKResponder(conn net.Conn, msg1 []byte) ([]byte, error) {
@@ -213,7 +216,7 @@ func (n *Node) addPeerSession(conn net.Conn, chainID peer.ChainID, result *noise
 	return n.peers.Add(chainID, conn, framer, isPadding)
 }
 
-func (n *Node) handleIKPayload(conn net.Conn, payload []byte) {
+func (n *Node) handleIKPayload(conn net.Conn, payload []byte, result *noise.HandshakeResult) {
 	// IK 握手载荷包含发起方的身份信息
 	// 典型格式: type(1) || chain_id(32) || [additional_data]
 	if len(payload) < 33 {
@@ -222,6 +225,15 @@ func (n *Node) handleIKPayload(conn net.Conn, payload []byte) {
 
 	var chainID peer.ChainID
 	copy(chainID[:], payload[1:33])
+
+	// 身份验证: 载荷中的 chain_id 必须匹配经过 Noise IK 密码学认证的远程静态密钥
+	authenticatedID := hashToChainID(result.RemoteStatic)
+	if chainID != authenticatedID {
+		// 载荷声称的 chain_id 与密码学认证的密钥不一致 — 拒绝连接
+		n.peers.Remove(authenticatedID)
+		conn.Close()
+		return
+	}
 
 	// 标记好友为在线
 	n.topology.MarkOnline(chainID)

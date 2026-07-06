@@ -69,8 +69,9 @@ type UserBlock struct {
 	SendPk         []byte
 	CreditScore    uint64
 	TrustWeight    uint64
-	TotalRepayAmount uint64
-	CreditLimit    uint64
+	TotalRepayAmount uint64   // 实际还款总额 (驱动 TrustWeight)
+	SalaryEarnings   uint64   // 节点工资累计 (不计入 TrustWeight，防止正反馈循环)
+	CreditLimit      uint64
 	SeedPhase      bool
 	Guarantors     [][]byte
 	NodeRole       NodeRole

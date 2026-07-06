@@ -1,0 +1,162 @@
+syntax = "proto3";
+
+package nekop2p.local;
+
+option go_package = "github.com/nekop2p/nekop2p/localapi";
+
+import "gogoproto/gogo.proto";
+
+// ============================================================
+// LocalAPI — neko-node 本地 gRPC 服务
+// 仅供 localhost 调用，不对外暴露
+// ============================================================
+
+service LocalAPI {
+    // === 身份 ===
+    rpc GetMyIdentity(Empty) returns (MyIdentity);
+
+    // === 通信 ===
+    rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+    rpc SubscribeMessages(SubscribeRequest) returns (stream MessageEvent);
+
+    // === 交易 ===
+    rpc SubmitTransaction(SubmitTxRequest) returns (SubmitTxResponse);
+    rpc SimulateTransaction(SimulateTxRequest) returns (SimulateTxResponse);
+
+    // === 查询 ===
+    rpc QueryChain(QueryRequest) returns (QueryResponse);
+    rpc GetFriendStatus(GetFriendStatusRequest) returns (FriendStatus);
+
+    // === 事件订阅 ===
+    rpc SubscribeEvents(EventFilter) returns (stream Event);
+
+    // === 随机信标 ===
+    rpc GetRandomBeacon(GetRandomBeaconRequest) returns (RandomBeacon);
+
+    // === 游戏 ===
+    rpc QueryGameState(QueryGameStateRequest) returns (GameState);
+
+    // === 节点管理 ===
+    rpc GetNodeStatus(Empty) returns (NodeStatus);
+    rpc SetRole(SetRoleRequest) returns (SetRoleResponse);
+}
+
+// ============================================================
+// 消息类型
+// ============================================================
+
+message Empty {}
+
+message MyIdentity {
+    string chain_id     = 1;
+    bytes  recv_pk      = 2;
+    bytes  send_pk      = 3;
+    uint64 credit_score = 4;
+    uint64 trust_weight = 5;
+    string node_role    = 6;
+}
+
+message SendMessageRequest {
+    string target_chain_id = 1;
+    bytes  plaintext       = 2;
+    int32  anon_level      = 3;  // 0=明道 1=暗道 2=防空洞
+}
+
+message SendMessageResponse {
+    bytes message_id = 1;
+}
+
+message SubscribeRequest {
+    string filter = 1;  // 消息过滤器 (可选)
+}
+
+message MessageEvent {
+    string from_chain_id = 1;
+    bytes  ciphertext    = 2;
+    int64  timestamp     = 3;
+}
+
+message SubmitTxRequest {
+    string tx_type  = 1;  // register/repay/loan/guarantee 等
+    bytes  tx_data  = 2;  // 序列化的交易数据
+}
+
+message SubmitTxResponse {
+    string tx_hash = 1;
+    int64  height  = 2;  // 预计包含区块高度
+}
+
+message SimulateTxRequest {
+    string tx_type = 1;
+    bytes  tx_data = 2;
+}
+
+message SimulateTxResponse {
+    bool   success  = 1;
+    string result   = 2;
+    uint64 gas_used = 3;
+}
+
+message QueryRequest {
+    string query_type = 1;  // users/bonds/loans/pool/status
+    bytes  query_data = 2;
+}
+
+message QueryResponse {
+    bytes result = 1;  // JSON 编码
+}
+
+message GetFriendStatusRequest {
+    bytes chain_id = 1;
+}
+
+message FriendStatus {
+    bytes  chain_id      = 1;
+    bool   online         = 2;
+    int64  last_seen      = 3;
+    uint32 trust_distance = 4;
+}
+
+message EventFilter {
+    repeated string types = 1;  // friend_online/friend_offline/new_message/tx_confirmed/block
+}
+
+message Event {
+    string type       = 1;
+    bytes  data       = 2;
+    int64  timestamp  = 3;
+}
+
+message GetRandomBeaconRequest {
+    uint64 round = 1;
+}
+
+message RandomBeacon {
+    uint64 round = 1;
+    bytes  value = 2;  // 32B 随机值
+}
+
+message QueryGameStateRequest {
+    string game_id = 1;
+}
+
+message GameState {
+    bytes state = 1;  // JSON 编码的游戏状态
+}
+
+message NodeStatus {
+    string sync_profile   = 1;  // online/limbo/isolated/offline
+    int32  peers_online   = 2;
+    int64  chain_height   = 3;
+    uint64 pool_balance   = 4;
+    int32  friends_online = 5;
+}
+
+message SetRoleRequest {
+    string role = 1;  // none/formal/candidate
+}
+
+message SetRoleResponse {
+    bool   success = 1;
+    string message = 2;
+}

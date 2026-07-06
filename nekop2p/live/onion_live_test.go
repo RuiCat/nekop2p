@@ -106,7 +106,7 @@ func relayHop(t *testing.T, name string, self, next *nodeCfg, nextHop onion.Hop,
 	}
 	defer conn.Close()
 
-	hs := noise.NewResponderIK(&self.keys.RecvKey, nil, noise.RoleFriend)
+	hs := noise.NewResponderIK(&self.keys.RecvKey, [32]byte{}, noise.RoleFriend)
 	buf := make([]byte, 8192)
 	nr, _ := conn.Read(buf)
 	hs.ReadMessage(buf[:nr])
@@ -152,7 +152,7 @@ func exitHop(t *testing.T, self, target *nodeCfg, expectedTarget onion.Target,
 	}
 	defer conn.Close()
 
-	hs := noise.NewResponderIK(&self.keys.RecvKey, nil, noise.RoleFriend)
+	hs := noise.NewResponderIK(&self.keys.RecvKey, [32]byte{}, noise.RoleFriend)
 	buf := make([]byte, 8192)
 	nr, _ := conn.Read(buf)
 	hs.ReadMessage(buf[:nr])

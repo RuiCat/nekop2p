@@ -160,7 +160,7 @@ func handleConnection(n *TestNode, conn net.Conn) {
 	defer conn.Close()
 
 	// Noise IK 响应方
-	hs := noise.NewResponderIK(&n.Keys.RecvKey, nil, noise.RoleFriend)
+	hs := noise.NewResponderIK(&n.Keys.RecvKey, [32]byte{}, noise.RoleFriend)
 	buf := make([]byte, 8192)
 	nr, err := conn.Read(buf)
 	if err != nil {
@@ -320,7 +320,7 @@ func testRelayConnection(alice, bob, charlie *TestNode) {
 
 	go func() {
 		conn, _ := bobLn.Accept()
-		hs := noise.NewResponderIK(&bob.Keys.RecvKey, nil, noise.RoleFriend)
+		hs := noise.NewResponderIK(&bob.Keys.RecvKey, [32]byte{}, noise.RoleFriend)
 		buf := make([]byte, 8192)
 		nr, _ := conn.Read(buf)
 		hs.ReadMessage(buf[:nr])
@@ -331,7 +331,7 @@ func testRelayConnection(alice, bob, charlie *TestNode) {
 	}()
 	go func() {
 		conn, _ := charlieLn.Accept()
-		hs := noise.NewResponderIK(&charlie.Keys.RecvKey, nil, noise.RoleFriend)
+		hs := noise.NewResponderIK(&charlie.Keys.RecvKey, [32]byte{}, noise.RoleFriend)
 		buf := make([]byte, 8192)
 		nr, _ := conn.Read(buf)
 		hs.ReadMessage(buf[:nr])

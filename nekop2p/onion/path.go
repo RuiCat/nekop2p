@@ -2,21 +2,21 @@ package onion
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"fmt"
+	"math/big"
 )
 
-// cryptoRandIntn 返回 [0, max) 范围内的密码学安全随机整数。
+// cryptoRandIntn 返回 [0, max) 范围内的密码学安全无偏随机整数。
+// 使用 rejection sampling 避免模偏差 (crypto/rand.Int 保证均匀分布)。
 func cryptoRandIntn(max int) int {
 	if max <= 0 {
 		return 0
 	}
-	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		// crypto/rand 在 Linux 上极其可靠；失败是灾难性的
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
 		panic(fmt.Sprintf("onion: crypto/rand failed: %v", err))
 	}
-	return int(binary.BigEndian.Uint64(buf[:]) % uint64(max))
+	return int(n.Int64())
 }
 
 // PathSelector 使用节点本地拓扑选择洋葱路径。
@@ -54,23 +54,30 @@ func (ps *PathSelector) SelectPath(length int) (Path, error) {
 		return nil, fmt.Errorf("no available entry nodes")
 	}
 
-	// 中间跳：从所有可用节点中随机选择
+	// 中间跳：从所有可用节点中随机选择，确保全局不重复
 	allNodes := append([]Hop{}, ps.coreFriends...)
 	allNodes = append(allNodes, ps.publicNodes...)
+
+	used := make(map[string]bool)
+	used[nodeKey(path[0])] = true
 
 	for i := 1; i < length; i++ {
 		if len(allNodes) == 0 {
 			return nil, fmt.Errorf("no available nodes for hop %d", i)
 		}
-		// 选择与上一跳不同的节点
-		attempts := 0
-		for {
+		// 从未使用的节点中选择，最多尝试 100 次
+		chosen := false
+		for attempt := 0; attempt < 100; attempt++ {
 			candidate := allNodes[cryptoRandIntn(len(allNodes))]
-			if candidate != path[i-1] || attempts > 10 {
+			if !used[nodeKey(candidate)] {
 				path[i] = candidate
+				used[nodeKey(candidate)] = true
+				chosen = true
 				break
 			}
-			attempts++
+		}
+		if !chosen {
+			return nil, fmt.Errorf("onion: not enough distinct nodes for hop %d/%d", i+1, length)
 		}
 	}
 

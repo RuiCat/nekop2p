@@ -38,13 +38,19 @@ import (
 
 // State 保存完整的双棘轮状态。
 // mu 保护所有字段的并发访问（Encrypt/Decrypt 可被不同 goroutine 同时调用）。
+//
+// === DH 棘轮生命周期 ===
+//   发送方：保持 DHs 不变，仅推进对称棘轮。收到新 DHr 后才做 DH 棘轮。
+//   接收方：检测 header 中新 DHr → dhRatchetStep(新DHr) → 生成新 DHs。
+//   这符合 Signal Double Ratchet 规范 (§3.4 "Symmetric-key ratchet")。
 type State struct {
 	mu sync.Mutex
 
 	// DH 棘轮
-	DHs     [32]byte // 我们当前的 DH 私钥
-	DHr     [32]byte // 远程当前的 DH 公钥
-	RootKey [32]byte
+	DHs         [32]byte // 我们当前的 DH 私钥
+	DHr         [32]byte // 远程当前的 DH 公钥
+	DHPublicKey [32]byte // 我们当前的 DH 公钥 (Curve25519 派生)
+	RootKey     [32]byte
 
 	// 发送链
 	SendChainKey [32]byte
@@ -55,12 +61,15 @@ type State struct {
 	RecvMsgNum   uint32
 
 	// 乱序消息处理
-	SkippedMsgKeys map[[8]byte][32]byte
+	SkippedMsgKeys map[[32]byte][32]byte // 键: SHA256(DHr || msgNum)
 	MaxSkip        uint32
 
-	// 前一次发送链（用于 DH 棘轮步骤）
+	// 前一次发送链（用于 DH 棘轮步骤中接收方的跳消息处理）
 	PrevSendChainKey [32]byte
 	PrevSendMsgNum   uint32
+
+	// 是否需要 DH 棘轮步 (收到新 DHr 后下一次 Encrypt 时触发)
+	needsDHStep bool
 }
 
 // Header 附加到每条消息上，供接收方处理。
@@ -77,8 +86,23 @@ const (
 	MaxMessageSize   = 65535
 )
 
+// SetMaxSkip 设置最大跳过消息数。高吞吐 P2P 场景可调至 5000。
+func (s *State) SetMaxSkip(n uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.MaxSkip = n
+}
+
+// GetMaxSkip 返回当前最大跳过消息数。
+func (s *State) GetMaxSkip() uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.MaxSkip
+}
+
 // InitAsInitiator 为连接发起方初始化棘轮。
 // aliceEphemeralPK 来自信标响应。
+// 返回初始化后的 State 和我们的初始 DH 公钥。
 func InitAsInitiator(ourIdentitySK, remoteIdentityPK, aliceEphemeralPK *[32]byte) (*State, [32]byte, error) {
 	// 生成我们的临时密钥
 	ephKey, err := crypto.GenerateEphemeralKey()
@@ -99,10 +123,12 @@ func InitAsInitiator(ourIdentitySK, remoteIdentityPK, aliceEphemeralPK *[32]byte
 
 	s := &State{
 		MaxSkip:        DefaultMaxSkip,
-		SkippedMsgKeys: make(map[[8]byte][32]byte),
+		SkippedMsgKeys: make(map[[32]byte][32]byte),
+		needsDHStep:    true, // 发起方首条消息需要做 DH 棘轮建立发送链
 	}
 	copy(s.DHs[:], ephKey.Private[:])
 	copy(s.DHr[:], aliceEphemeralPK[:])
+	copy(s.DHPublicKey[:], ephKey.Public[:])
 
 	// RootKey = SHA256(dh1 || dh2)
 	h := sha256.New()
@@ -126,10 +152,13 @@ func InitAsResponder(ourIdentitySK, remoteIdentityPK, ourEphemeralSK, remoteEphe
 
 	s := &State{
 		MaxSkip:        DefaultMaxSkip,
-		SkippedMsgKeys: make(map[[8]byte][32]byte),
+		SkippedMsgKeys: make(map[[32]byte][32]byte),
+		needsDHStep:    false,
 	}
 	copy(s.DHs[:], ourEphemeralSK[:])
 	copy(s.DHr[:], remoteEphemeralPK[:])
+	// 从临时私钥派生公钥
+	curve25519.ScalarBaseMult(&s.DHPublicKey, ourEphemeralSK)
 
 	h := sha256.New()
 	h.Write(dh1)
@@ -140,39 +169,52 @@ func InitAsResponder(ourIdentitySK, remoteIdentityPK, ourEphemeralSK, remoteEphe
 }
 
 // Encrypt 加密明文消息并返回有线格式 [Header 40B || ciphertext]。
+//
+// 按照 Signal Double Ratchet 规范:
+//   发送方不每次生成新 DH 密钥对。DHs 保持不变，仅推进对称棘轮。
+//   当收到对方新 DHr 后 (needsDHStep=true)，在下次 Encrypt 中才做 DH 棘轮。
 func (s *State) Encrypt(plaintext []byte) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 保存前一次发送链
+	// 保存前一次发送链（供接收方的跳消息处理）
 	s.PrevSendChainKey = s.SendChainKey
 	s.PrevSendMsgNum = s.SendMsgNum
 
-	// 生成新的 DH 密钥对
-	ephKey, err := crypto.GenerateEphemeralKey()
-	if err != nil {
-		return nil, err
+	// 如果需要 DH 棘轮步（收到新 DHr 后首次发送，或首次消息建立发送链）
+	if s.needsDHStep {
+		// 生成新的 DH 密钥对
+		ephKey, err := crypto.GenerateEphemeralKey()
+		if err != nil {
+			return nil, err
+		}
+
+		// DH 棘轮：DH(new_DHs, DHr) → 新 SendChainKey
+		// 使用新密钥做 DH，确保接收方用 DH(old_DHs, new_DHPublicKey) 得到相同共享密钥
+		dhOutput, err := curve25519.X25519(ephKey.Private[:], s.DHr[:])
+		if err != nil {
+			return nil, fmt.Errorf("dh ratchet: %w", err)
+		}
+		var dhOutArr [32]byte
+		copy(dhOutArr[:], dhOutput)
+
+		s.RootKey, s.SendChainKey = kdfRK(s.RootKey, dhOutArr)
+
+		// 更新 DH 密钥
+		copy(s.DHs[:], ephKey.Private[:])
+		copy(s.DHPublicKey[:], ephKey.Public[:])
+
+		s.SendMsgNum = 0
+		s.needsDHStep = false
 	}
 
-	// DH 棘轮步骤
-	dhOutput, err := curve25519.X25519(ephKey.Private[:], s.DHr[:])
-	if err != nil {
-		return nil, fmt.Errorf("dh ratchet: %w", err)
-	}
-	var dhOutArr [32]byte
-	copy(dhOutArr[:], dhOutput)
-
-	s.RootKey, s.SendChainKey = kdfRK(s.RootKey, dhOutArr)
-	copy(s.DHs[:], ephKey.Private[:])
-	s.SendMsgNum = 0
-
-	// 对称棘轮：派生消息密钥
+	// 对称棘轮：仅从 SendChainKey 派生消息密钥
 	var messageKey [32]byte
 	s.SendChainKey, messageKey = kdfCK(s.SendChainKey)
 
-	// 构建头部
+	// 构建头部（使用当前 DHPublicKey，不生成新的）
 	var header Header
-	copy(header.DHPublicKey[:], ephKey.Public[:])
+	copy(header.DHPublicKey[:], s.DHPublicKey[:])
 	header.PrevChainCount = s.PrevSendMsgNum
 	header.MsgNum = s.SendMsgNum
 
@@ -220,6 +262,9 @@ func (s *State) Decrypt(wireMsg []byte) ([]byte, error) {
 	idx := skippedKeyIndex(s.DHr, header.MsgNum)
 	if mk, found := s.SkippedMsgKeys[idx]; found && header.MsgNum < s.RecvMsgNum {
 		// 乱序消息：使用存储的消息密钥
+		if len(body) < 12+16 {
+			return nil, fmt.Errorf("message body too short for out-of-order decrypt: %d", len(body))
+		}
 		aead, err := crypto.NewAESGCM(mk[:])
 		if err != nil {
 			return nil, err
@@ -236,6 +281,14 @@ func (s *State) Decrypt(wireMsg []byte) ([]byte, error) {
 	}
 
 	// 跳过已处理的消息（处理空缺）
+	if header.MsgNum < s.RecvMsgNum {
+		// 消息号小于当前接收计数 → 已被处理或已跳过
+		// 检查是否在已跳过消息映射中
+		if _, found := s.SkippedMsgKeys[idx]; !found {
+			return nil, fmt.Errorf("stale or replayed message: msgNum=%d < recvMsgNum=%d",
+				header.MsgNum, s.RecvMsgNum)
+		}
+	}
 	if err := s.skipMessageKeys(header.MsgNum); err != nil {
 		return nil, err
 	}
@@ -245,6 +298,9 @@ func (s *State) Decrypt(wireMsg []byte) ([]byte, error) {
 	s.RecvChainKey, messageKey = kdfCK(s.RecvChainKey)
 
 	// 解密
+	if len(body) < 12+16 {
+		return nil, fmt.Errorf("message body too short for decrypt: %d", len(body))
+	}
 	aead, err := crypto.NewAESGCM(messageKey[:])
 	if err != nil {
 		return nil, err
@@ -262,6 +318,7 @@ func (s *State) Decrypt(wireMsg []byte) ([]byte, error) {
 }
 
 func (s *State) dhRatchetStep(newDHPublicKey [32]byte) error {
+	// DH1: DH(old_DHs, new_DHr) → 更新 RootKey 和 RecvChainKey
 	dhOutput, err := curve25519.X25519(s.DHs[:], newDHPublicKey[:])
 	if err != nil {
 		return fmt.Errorf("dh ratchet step: low-order point rejected: %w", err)
@@ -269,18 +326,46 @@ func (s *State) dhRatchetStep(newDHPublicKey [32]byte) error {
 	var dhOutArr [32]byte
 	copy(dhOutArr[:], dhOutput)
 	s.RootKey, s.RecvChainKey = kdfRK(s.RootKey, dhOutArr)
+
+	// 生成我们的新 DH 密钥对
+	ephKey, err := crypto.GenerateEphemeralKey()
+	if err != nil {
+		return fmt.Errorf("dh ratchet: generate new key: %w", err)
+	}
+
+	// DH2: DH(new_DHs, new_DHr) → 更新 RootKey 和 SendChainKey
+	dhOutput2, err := curve25519.X25519(ephKey.Private[:], newDHPublicKey[:])
+	if err != nil {
+		return fmt.Errorf("dh ratchet step 2: %w", err)
+	}
+	var dhOut2 [32]byte
+	copy(dhOut2[:], dhOutput2)
+	s.RootKey, s.SendChainKey = kdfRK(s.RootKey, dhOut2)
+
+	// 更新 DH 状态
 	s.DHr = newDHPublicKey
+	copy(s.DHs[:], ephKey.Private[:])
+	copy(s.DHPublicKey[:], ephKey.Public[:])
 	s.RecvMsgNum = 0
+	s.SendMsgNum = 0
+	s.needsDHStep = false // 刚做完 DH 步，不需要再做
+
 	return nil
 }
 
-func skippedKeyIndex(dhr [32]byte, msgNum uint32) [8]byte {
-	var idx [8]byte
-	copy(idx[:], dhr[:])  // 使用完整 DHr 以防止碰撞
-	idx[4] = byte(msgNum >> 24)
-	idx[5] = byte(msgNum >> 16)
-	idx[6] = byte(msgNum >> 8)
-	idx[7] = byte(msgNum)
+// skippedKeyIndex 使用 DHr 和 msgNum 的 SHA256 哈希作为映射键。
+// 32 字节完整哈希确保 2^-256 碰撞概率，消除前 4 字节碰撞风险。
+func skippedKeyIndex(dhr [32]byte, msgNum uint32) [32]byte {
+	h := sha256.New()
+	h.Write(dhr[:])
+	var buf [4]byte
+	buf[0] = byte(msgNum >> 24)
+	buf[1] = byte(msgNum >> 16)
+	buf[2] = byte(msgNum >> 8)
+	buf[3] = byte(msgNum)
+	h.Write(buf[:])
+	var idx [32]byte
+	copy(idx[:], h.Sum(nil))
 	return idx
 }
 
@@ -306,19 +391,24 @@ func (s *State) skipMessageKeys(until uint32) error {
 
 // --- KDF functions ---
 
+// kdfRK 实现 Signal Double Ratchet 规范的 KDF_RK(rk, dh_out):
+//   new_rk = HMAC-SHA256(rk, dh_out || 0x01)
+//   new_ck = HMAC-SHA256(rk, dh_out || 0x02)
+//
+// 使用 rootKey 作为 HMAC 密钥，dhOutput 拼接域分离字节作为消息。
+// 此一段式构造符合 Signal 规范，消除了原两段式构造的冗余。
 func kdfRK(rootKey, dhOutput [32]byte) ([32]byte, [32]byte) {
-	mac := hmac.New(sha256.New, rootKey[:])
-	mac.Write(dhOutput[:])
-	prk := mac.Sum(nil)
+	// new_rk = HMAC-SHA256(rk, dh_output || 0x01)
+	h1 := hmac.New(sha256.New, rootKey[:])
+	h1.Write(dhOutput[:])
+	h1.Write([]byte{0x01})
+	newRootKey := h1.Sum(nil)
 
-	mac.Reset()
-	h := hmac.New(sha256.New, prk)
-	h.Write([]byte{0x01})
-	newRootKey := h.Sum(nil)
-
-	h.Reset()
-	h.Write([]byte{0x02})
-	newChainKey := h.Sum(nil)
+	// new_ck = HMAC-SHA256(rk, dh_output || 0x02)
+	h2 := hmac.New(sha256.New, rootKey[:])
+	h2.Write(dhOutput[:])
+	h2.Write([]byte{0x02})
+	newChainKey := h2.Sum(nil)
 
 	var rk, ck [32]byte
 	copy(rk[:], newRootKey)

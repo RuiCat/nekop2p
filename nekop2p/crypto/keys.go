@@ -31,6 +31,11 @@ type KeyPair struct {
 	Private [32]byte // Curve25519 私钥（32字节随机数，内部clamping）
 }
 
+// Zero 安全清零私钥材料，使用后应调用以防止密钥在内存中残留。
+func (kp *KeyPair) Zero() {
+	Memzero(kp.Private[:])
+}
+
 // SignKeyPair 表示 Ed25519 密钥对，用于数字签名。
 // Ed25519 私钥为 64 字节（32字节seed + 32字节公钥），公钥为 32 字节。
 // 使用确定性签名（RFC 8032），不需要每次签名生成随机数。
@@ -103,6 +108,7 @@ func GenerateEphemeralKey() (*KeyPair, error) {
 	kp := &KeyPair{}
 	copy(kp.Private[:], priv)
 	copy(kp.Public[:], pub)
+	Memzero(priv) // 清除堆上临时密钥材料
 	return kp, nil
 }
 
@@ -111,4 +117,15 @@ func GenerateEphemeralKey() (*KeyPair, error) {
 // chain_id 是用户在明域的"网名"——公开但不关联真实身份。
 func DeriveChainID(pk [32]byte) [32]byte {
 	return sha256.Sum256(pk[:])
+}
+
+// Memzero 安全清零字节切片，防止密钥材料在内存中残留。
+// 使用此函数而非简单的 b = nil 可防止编译器优化掉清零操作。
+//
+// Go 1.21+ 的 clear() 内建函数提供等效功能，但 Memzero 作为显式安全原语
+// 表达意图更清晰，且兼容旧版本。
+func Memzero(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }

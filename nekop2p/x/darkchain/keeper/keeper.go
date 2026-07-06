@@ -5,6 +5,7 @@ package keeper
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/nekop2p/nekop2p/store"
@@ -15,11 +16,17 @@ import (
 type Keeper struct {
 	store      *store.ChainStore
 	cycleCount uint64
+	// 身份标记: 用于防自我交易，带锁保护并发访问
+	markerMu         sync.RWMutex
+	identityMarkers  map[string]bool
 }
 
 // NewKeeper 创建新的暗链 Keeper。
 func NewKeeper(s *store.ChainStore) *Keeper {
-	return &Keeper{store: s}
+	return &Keeper{
+		store:           s,
+		identityMarkers: make(map[string]bool),
+	}
 }
 
 // ===== 贷款管理 =====
@@ -169,20 +176,30 @@ func (k *Keeper) IsNullifierSpent(nullifier string) bool {
 // ===== 身份标记 =====
 
 // identityMarkers 存储已看到的身份标记（用于防自我交易）。
+// 现在存储在 Keeper 结构体中，带 RWMutex 保护并发访问。
 // 每周期（AdvanceCycle）清空。
-var identityMarkers = make(map[string]bool)
 
 func (k *Keeper) RecordIdentityMarker(marker string) bool {
-	if identityMarkers[marker] {
+	k.markerMu.Lock()
+	defer k.markerMu.Unlock()
+	if k.identityMarkers[marker] {
 		return false // 重复标记：同一人在同一周期内尝试双重交易
 	}
-	identityMarkers[marker] = true
+	k.identityMarkers[marker] = true
 	return true
 }
 
+func (k *Keeper) HasIdentityMarker(marker string) bool {
+	k.markerMu.RLock()
+	defer k.markerMu.RUnlock()
+	return k.identityMarkers[marker]
+}
+
 func (k *Keeper) AdvanceCycle() {
+	k.markerMu.Lock()
+	defer k.markerMu.Unlock()
 	k.cycleCount++
-	identityMarkers = make(map[string]bool) // 新周期：清除所有旧标记
+	k.identityMarkers = make(map[string]bool) // 新周期：清除所有旧标记
 }
 
 func (k *Keeper) CycleCount() uint64 { return k.cycleCount }

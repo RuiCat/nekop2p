@@ -41,7 +41,7 @@ const (
 	MaxHopDefault = 7
 	SlotBatch     = 8   // 将槽位计数填充到 8 的倍数
 
-	BeaconTTL = 5 * time.Minute // 最大有效窗口
+	BeaconTTL = 2 * time.Minute // 最大有效窗口 (缩短防重放放大)
 )
 
 // BeaconPacket 是加密信标的线缆格式。
@@ -50,7 +50,6 @@ type BeaconPacket struct {
 	HopCount   uint8
 	HopMax     uint8
 	SlotCount  uint8   // 已填充：ceil(realCount, 8)
-	RealCount  uint8   // 实际目标数量（不序列化）
 
 	BodyCiphertext []byte // AES-256-GCM 加密后的内层载荷
 	Slots          []BeaconSlot

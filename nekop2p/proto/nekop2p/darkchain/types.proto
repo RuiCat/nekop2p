@@ -1,87 +1,133 @@
-// proto/nekop2p/darkchain/types.proto
-//
-// 暗域模块：匿名借贷、信用票据、混沌结算。
-// 所有身份均为 zk-匿名。外部观察者无法将
-// 暗域活动与明域的 chain_ids 关联起来。
 syntax = "proto3";
 
 package nekop2p.darkchain;
 
 option go_package = "github.com/nekop2p/nekop2p/x/darkchain/types";
 
-// AnonIdentity 是暗域交易的一次性匿名身份。
-// 通过 PRF(master_secret, counter) 生成 — 不可关联到 chain_id。
-message AnonIdentity {
-    bytes anon_id = 1;
-    bytes zk_credit_proof = 2;   // 明域信用评分的 ZK 证明
-    int64 created_at = 3;
-    int64 expires_at = 4;
-}
+import "gogoproto/gogo.proto";
+import "cosmos/base/v1beta1/coin.proto";
 
-// LoanRecord 是一笔暗域贷款（IOU）。
+// ============================================================
+// 暗链 — 匿名借贷 + 信用票据 UTXO
+// ============================================================
+
+// 暗链贷款记录
 message LoanRecord {
-    string loan_id = 1;
-    bytes borrower_anon = 2;
-    bytes lender_anon = 3;       // 或资金池标识符
-    uint64 amount = 4;
-    int64 term_days = 5;
-    LoanStatus status = 6;
-    bytes zk_credit_proof = 7;
-    bytes inkwell_params = 8;    // 混沌结算参数
-    int64 created_at = 9;
-    int64 due_date = 10;
-    int64 settled_at = 11;
-    repeated RepayFragment fragments = 12;
-}
-
-message RepayFragment {
-    uint64 amount = 1;
-    bytes payer_anon = 2;
-    int64 paid_at = 3;
-    bytes zk_repay_proof = 4;
+    bytes    loan_id         = 1;
+    bytes    borrower_anon   = 2;  // 借款方 ZK 化名
+    bytes    lender_anon     = 3;  // 贷款方 ZK 化名
+    uint64   amount          = 4;
+    int64    term_days       = 5;  // 期限 (天)
+    LoanStatus status        = 6;
+    bytes    zk_credit_proof = 7;  // ZK信用证明
+    bytes    inkwell_params  = 8;  // 混沌结算参数 (序列化)
+    int64    created_at      = 9;
+    int64    due_at          = 10;
+    int64    settled_at      = 11;
 }
 
 enum LoanStatus {
-    PENDING = 0;
-    ACTIVE = 1;
-    SETTLED = 2;
-    DEFAULTED = 3;
+    LOAN_STATUS_UNSPECIFIED = 0;
+    LOAN_STATUS_REQUESTED   = 1;
+    LOAN_STATUS_APPROVED    = 2;  // 已放款
+    LOAN_STATUS_SETTLING    = 3;  // 结算中
+    LOAN_STATUS_SETTLED     = 4;  // 已结清
+    LOAN_STATUS_DEFAULTED   = 5;  // 已违约
 }
 
-// CreditNote 是一个可花费的信用单元（UTXO 模型）。
+// 信用票据 (UTXO 模型)
 message CreditNote {
-    uint64 value = 1;
-    bytes owner_key = 2;
-    bytes serial = 3;
-    bytes commitment = 4;  // SHA256(value || owner_key || serial)
+    bytes    note_id   = 1;
+    uint64   value     = 2;
+    bytes    owner_key = 3;  // 当前持有者公钥哈希
+    bytes    serial    = 4;  // 序列号 (用于 nullifier)
+    int64    created_at  = 5;
+    int64    expires_at  = 6;
 }
 
-// 暗域全局状态。
-message DarkState {
-    repeated bytes credit_tree = 1;      // 未花费票据承诺的 Merkle 树
-    repeated bytes nullifier_set = 2;    // 已花费票据的 nullifier（防双花）
-    repeated bytes identity_markers = 3; // 每周期已使用的标记（防自我交易）
-    bytes cycle_marker = 4;              // 当前区块周期标记
+// Nullifier — 防止票据双花
+message Nullifier {
+    bytes    value       = 1;  // = MiMC(owner_secret, serial)
+    bytes    spent_by    = 2;  // 花费者 anon_id
+    int64    spent_at    = 3;
 }
 
-// ===== 消息 =====
+// 身份标记 — 防自我交易
+message IdentityMarker {
+    bytes    value      = 1;  // = PRF(master_secret, cycle_marker)
+    bytes    anon_id    = 2;
+    bytes    cycle_marker = 3;
+}
+
+// ============================================================
+// 交易消息
+// ============================================================
 
 message MsgRequestLoan {
-    bytes borrower_anon = 1;
-    uint64 amount = 2;
-    int64 term_days = 3;
-    bytes zk_credit_proof = 4;
-    bytes inkwell_seed = 5;
+    string   sender          = 1;
+    bytes    borrower_anon   = 2;
+    uint64   amount          = 3;
+    int64    term_days       = 4;
+    bytes    zk_credit_proof = 5;   // ZK: 票据所有权 + 未双花
+    bytes    zk_anon_proof   = 6;   // ZK: 匿名化名合法
+    bytes    nullifier       = 7;   // 花费的票据 nullifier
+    repeated bytes input_notes = 8; // 输入票据 ID 列表
+    bytes    cycle_marker    = 9;   // 周期标记
 }
 
 message MsgApproveLoan {
-    string loan_id = 1;
-    bytes lender_anon = 2;
-    bytes inkwell_params = 3;
+    string   sender        = 1;
+    bytes    loan_id       = 2;
+    bytes    lender_anon   = 3;
+    bytes    inkwell_params = 4;  // 序列化的混沌结算参数
 }
 
 message MsgSettleLoan {
-    string loan_id = 1;
-    bytes delivery_proof = 2;
-    bytes settlement_cmd = 3;
+    string   sender           = 1;
+    bytes    loan_id          = 2;
+    bytes    zk_repay_proof   = 3;  // ZK: 还款分片完成
+    bytes    bright_tx_ref    = 4;  // 对应明链还款交易引用
+}
+
+message MsgCreateCreditNote {
+    string   sender     = 1;
+    uint64   value      = 2;
+    bytes    owner_key  = 3;
+    bytes    zk_work_proof = 4;  // ZK: 工作量证明 (节点赚取票据)
+}
+
+message MsgSpendCreditNote {
+    string   sender       = 1;
+    bytes    note_id      = 2;
+    bytes    nullifier    = 3;
+    bytes    zk_credit_proof = 4;
+    bytes    identity_marker = 5;  // 防自我交易
+}
+
+// ============================================================
+// 查询
+// ============================================================
+
+message QueryLoanRequest {
+    bytes loan_id = 1;
+}
+
+message QueryLoanResponse {
+    LoanRecord loan = 1;
+}
+
+message QueryLoansByAnonRequest {
+    bytes anon_id = 1;
+}
+
+message QueryLoansByAnonResponse {
+    repeated LoanRecord loans = 1;
+}
+
+message QueryNullifierRequest {
+    bytes nullifier = 1;
+}
+
+message QueryNullifierResponse {
+    bool is_spent = 1;
 }

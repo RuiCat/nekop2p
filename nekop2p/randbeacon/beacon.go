@@ -48,7 +48,7 @@ type Reveal struct {
 	SubmittedAt time.Time
 }
 
-// NewRound 创建新一轮随机信标。
+// NewRound 创建新一轮随机信标并开始计时。
 func NewRound(number uint64, commitWindow, revealWindow time.Duration, deposit uint64) *Round {
 	if commitWindow <= 0 {
 		commitWindow = 10 * time.Second
@@ -56,8 +56,11 @@ func NewRound(number uint64, commitWindow, revealWindow time.Duration, deposit u
 	if revealWindow <= 0 {
 		revealWindow = 10 * time.Second
 	}
+	now := time.Now()
 	return &Round{
 		Number:       number,
+		CommitPhase:  now,
+		RevealPhase:  now.Add(commitWindow),
 		CommitWindow: commitWindow,
 		RevealWindow: revealWindow,
 		Deposit:      deposit,
@@ -66,13 +69,18 @@ func NewRound(number uint64, commitWindow, revealWindow time.Duration, deposit u
 	}
 }
 
-// SubmitCommitment 为本轮提交一个承诺。
+// SubmitCommitment 在提交阶段提交承诺。
+// 必须在 CommitPhase + CommitWindow 窗口内提交。
 func (r *Round) SubmitCommitment(participant string, seed, nonce [32]byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.complete {
 		return fmt.Errorf("round %d already complete", r.Number)
+	}
+	deadline := r.CommitPhase.Add(r.CommitWindow)
+	if time.Now().After(deadline) {
+		return fmt.Errorf("commit window closed for round %d (deadline: %s)", r.Number, deadline.Format(time.RFC3339))
 	}
 	if _, exists := r.commitments[participant]; exists {
 		return fmt.Errorf("participant %s already committed", participant)
@@ -87,7 +95,8 @@ func (r *Round) SubmitCommitment(participant string, seed, nonce [32]byte) error
 	return nil
 }
 
-// SubmitReveal 揭示先前承诺的种子和随机数。
+// SubmitReveal 在揭示阶段揭示种子。
+// 必须在 [RevealPhase, RevealPhase+RevealWindow] 窗口内提交。
 func (r *Round) SubmitReveal(participant string, seed, nonce [32]byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -95,6 +104,15 @@ func (r *Round) SubmitReveal(participant string, seed, nonce [32]byte) error {
 	cmt, exists := r.commitments[participant]
 	if !exists {
 		return fmt.Errorf("no commitment from %s", participant)
+	}
+	// 时间窗口检查: 必须在揭示窗口内
+	now := time.Now()
+	if now.Before(r.RevealPhase) {
+		return fmt.Errorf("reveal window not yet open for round %d (opens: %s)", r.Number, r.RevealPhase.Format(time.RFC3339))
+	}
+	deadline := r.RevealPhase.Add(r.RevealWindow)
+	if now.After(deadline) {
+		return fmt.Errorf("reveal window closed for round %d (deadline: %s)", r.Number, deadline.Format(time.RFC3339))
 	}
 
 	// 验证揭示与承诺匹配
@@ -114,6 +132,7 @@ func (r *Round) SubmitReveal(participant string, seed, nonce [32]byte) error {
 
 // Finalize 根据所有已揭示的种子计算最终随机值。
 // 必须在揭示窗口关闭后调用。
+// 要求至少 2 个揭示以保证随机性（单参与者可完全控制输出）。
 func (r *Round) Finalize() ([32]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -124,6 +143,10 @@ func (r *Round) Finalize() ([32]byte, error) {
 
 	if len(r.reveals) == 0 {
 		return [32]byte{}, fmt.Errorf("no reveals in round %d", r.Number)
+	}
+	const minReveals = 2 // 最少需要 2 个揭示保证不可预测性
+	if len(r.reveals) < minReveals {
+		return [32]byte{}, fmt.Errorf("round %d: only %d reveals (need ≥%d)", r.Number, len(r.reveals), minReveals)
 	}
 
 	// 拼接所有已揭示的种子（按参与者排序以保证确定性）

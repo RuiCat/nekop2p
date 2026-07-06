@@ -85,16 +85,16 @@ func Build(params *BuildParams) (*BeaconPacket, []byte, error) {
 		copy(slots[i].EncryptedKey[:], wrapped[32:])
 	}
 
-	// 填充槽位以随机数据填充
+	// 填充槽位以全随机数据填充 (EncryptedKey 全部 60 字节)
 	for i := realCount; i < paddedCount; i++ {
 		rb, err := crypto.RandomBytes(32)
 		if err != nil {
-			return nil, nil, fmt.Errorf("beacon: random fill: %w", err)
+			return nil, nil, fmt.Errorf("beacon: random fill ephemeral: %w", err)
 		}
 		copy(slots[i].EphemeralPK[:], rb)
-		rb2, err := crypto.RandomBytes(32)
+		rb2, err := crypto.RandomBytes(60)
 		if err != nil {
-			return nil, nil, fmt.Errorf("beacon: random fill: %w", err)
+			return nil, nil, fmt.Errorf("beacon: random fill encrypted key: %w", err)
 		}
 		copy(slots[i].EncryptedKey[:], rb2)
 	}
@@ -109,7 +109,6 @@ func Build(params *BuildParams) (*BeaconPacket, []byte, error) {
 		HopCount:       0,
 		HopMax:         MaxHopDefault,
 		SlotCount:      uint8(paddedCount),
-		RealCount:      uint8(realCount),
 		BodyCiphertext: bodyCiphertext,
 		Slots:          slots,
 	}
@@ -122,10 +121,11 @@ func Build(params *BuildParams) (*BeaconPacket, []byte, error) {
 	return bp, pendingNonce[:], nil
 }
 
-// BuildResponse 构造一个 ResponsePacket，用以发回给信标发送者。
+// BuildResponse 构造一个加密的 ResponsePacket，用于发回给信标发送者。
+// senderRecvPK 是信标发送者的 Curve25519 接收公钥，用于 KEM 加密响应。
 func BuildResponse(inner *InnerPayload, responderChainID [ChainIDSize]byte,
 	responderIPv6 [IPv6Size]byte, responderPort uint16, ephemeralRatchetPK [32]byte,
-	sendPrivKey [64]byte) (*ResponsePacket, error) {
+	sendPrivKey [64]byte, senderRecvPK *[32]byte) (*ResponsePacket, error) {
 
 	// 1. 构造内层响应
 	respInner := make([]byte, IPv6Size+2+NonceSize+32+8)
@@ -144,13 +144,15 @@ func BuildResponse(inner *InnerPayload, responderChainID [ChainIDSize]byte,
 	sig := crypto.Sign(&sendPrivKey, respInner)
 	signed := append(respInner, sig...)
 
-	// 2. 用发送者的 recv_pk 加密（需要从链中查询）
-	// 当前由调用者提供加密后的载荷
-	// （加密是外部完成的，因为我们需要发送者的 recv_pk）
+	// 2. 用发送者的 recv_pk 进行 KEM 加密 (在函数内部完成)
+	encrypted, err := crypto.KEMEncrypt(senderRecvPK, signed)
+	if err != nil {
+		return nil, fmt.Errorf("beacon: encrypt response: %w", err)
+	}
 
 	return &ResponsePacket{
 		ResponderChainID: responderChainID,
-		EncryptedPayload: signed, // 将由调用者加密
+		EncryptedPayload: encrypted, // 现在是真正的加密载荷
 	}, nil
 }
 

@@ -49,7 +49,7 @@ func TestFullDiscoveryFlow(t *testing.T) {
 		defer conn.Close()
 
 		// Noise_IK 响应方（Bob 是好友）
-		hs := noise.NewResponderIK(&aliceKeys.RecvKey, nil, noise.RoleFriend)
+		hs := noise.NewResponderIK(&aliceKeys.RecvKey, [32]byte{}, noise.RoleFriend)
 		msgBuf := make([]byte, 4096)
 		nr, _ := conn.Read(msgBuf)
 		if _, err := hs.ReadMessage(msgBuf[:nr]); err != nil {
@@ -149,15 +149,14 @@ func TestFullDiscoveryFlow(t *testing.T) {
 		var aliceCIDArr [32]byte
 		copy(aliceCIDArr[:], aliceCID[:])
 
-		resp, _ := beacon.BuildResponse(inner, aliceCIDArr, aliceIPv6, 9070, aliceEph.Public, aliceKeys.SendKey.Private)
+		resp, _ := beacon.BuildResponse(inner, aliceCIDArr, aliceIPv6, 9070, aliceEph.Public, aliceKeys.SendKey.Private, &bobKeys.RecvKey.Public)
 
-		// 为 Bob 加密响应
-		encPayload, _ := crypto.KEMEncrypt(&bobKeys.RecvKey.Public, resp.EncryptedPayload)
+		// Bob 验证 (载荷已由 BuildResponse 内部加密)
 
 		// Bob 验证
 		var expectedNonce [32]byte
 		copy(expectedNonce[:], inner.BeaconNonce[:])
-		innerResp, err := beacon.VerifyResponse(encPayload, &bobKeys.RecvKey.Private, &aliceKeys.SendKey.Public, expectedNonce)
+		innerResp, err := beacon.VerifyResponse(resp.EncryptedPayload, &bobKeys.RecvKey.Private, &aliceKeys.SendKey.Public, expectedNonce)
 		if err != nil {
 			t.Fatalf("Bob verify response: %v", err)
 		}
@@ -224,7 +223,7 @@ func TestThreeNodeRelay(t *testing.T) {
 	go func() {
 		conn, _ := aliceLn.Accept()
 		defer conn.Close()
-		hs := noise.NewResponderIK(&aliceKeys.RecvKey, nil, noise.RoleFriend)
+		hs := noise.NewResponderIK(&aliceKeys.RecvKey, [32]byte{}, noise.RoleFriend)
 		buf := make([]byte, 4096)
 		nr, _ := conn.Read(buf)
 		hs.ReadMessage(buf[:nr])
@@ -258,7 +257,7 @@ func TestThreeNodeRelay(t *testing.T) {
 	go func() {
 		conn, _ := relayLn.Accept()
 		defer conn.Close()
-		hs := noise.NewResponderIK(&relayKeys.RecvKey, nil, noise.RoleFriend)
+		hs := noise.NewResponderIK(&relayKeys.RecvKey, [32]byte{}, noise.RoleFriend)
 		buf := make([]byte, 4096)
 		nr, _ := conn.Read(buf)
 		hs.ReadMessage(buf[:nr])

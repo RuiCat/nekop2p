@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nekop2p/nekop2p/anon"
@@ -561,7 +562,8 @@ func (n *Node) sendBeaconResponse(inner *beacon.InnerPayload, sender *CoreFriend
 		return
 	}
 
-	// 构建回应包
+	// 构建回应包 (BuildResponse 内部已做 KEM 加密)
+	senderRecvPK := sender.RecvPK
 	resp, err := beacon.BuildResponse(
 		inner,
 		n.cfg.ChainID,
@@ -569,16 +571,14 @@ func (n *Node) sendBeaconResponse(inner *beacon.InnerPayload, sender *CoreFriend
 		9070,
 		ephKey.Public,
 		n.cfg.SendKey.Private,
+		&senderRecvPK,
 	)
 	if err != nil {
 		return
 	}
 
-	// 用发送者的 recv_pk 加密回应载荷
-	encPayload, err := crypto.KEMEncrypt(&sender.RecvPK, resp.EncryptedPayload)
-	if err != nil {
-		return
-	}
+	// 直接使用已加密的载荷
+	encPayload := resp.EncryptedPayload
 
 	// 通过 UDP 发送回应到发送者的 IPv6 地址
 	addr := fmt.Sprintf("[%s]:%d", net.IP(inner.SenderIPv6[:]).String(), inner.SenderPort)
@@ -756,7 +756,9 @@ func (n *Node) maintainBudget() {
 
 func (n *Node) pickPaddingTarget() ([16]byte, bool) {
 	if len(n.cfg.BootstrapIPs) > 0 {
-		return n.cfg.BootstrapIPs[0], true
+		// 轮换使用多个引导节点，防止所有填充连接指向同一 IP
+		idx := atomic.AddUint64(&n.paddingCounter, 1) % uint64(len(n.cfg.BootstrapIPs))
+		return n.cfg.BootstrapIPs[idx], true
 	}
 	return n.topology.GetAnyNeighborIPv6()
 }

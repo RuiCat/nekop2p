@@ -227,80 +227,73 @@ func UnwrapOne(recvPriv *[32]byte, encrypted []byte) (*UnwrapResult, error) {
 	return result, nil
 }
 
-// Serialize 将洋葱包扁平化为有线格式，并填充到固定大小。
-// 格式: circuit_id(16) || path_len(1) || layer_0_len(2) || layer_0 || ... || padding
-// 总大小填充至 FixedPacketSize 字节以抵抗流量分析。
+// Serialize 将洋葱包扁平化为有线格式，并始终填充到固定大小以抵抗流量分析。
+//
+// 格式: circuit_id(16) || layer_0_len(2) || layer_0 || ... || padding
+// 总大小始终填充到 FixedPacketSize 或其整数倍，防止从包大小推断路径长度。
+// path_len 不再明文暴露——解析方通过遍历所有加密层推断跳数。
 func (p *Packet) Serialize() []byte {
-	size := CircuitIDSize + 1 // circuit_id + path_len
+	// 计算实际数据大小
+	size := CircuitIDSize // circuit_id
 	for _, l := range p.Layers {
-		size += 2 + len(l)
-	}
-	// 如果小于固定大小，则填充（用于抵抗流量分析）
-	if size < FixedPacketSize {
-		buf := make([]byte, size, FixedPacketSize)
-		copy(buf[0:CircuitIDSize], p.CircuitID[:])
-		buf[CircuitIDSize] = byte(p.PathLen)
-		offset := CircuitIDSize + 1
-		for _, l := range p.Layers {
-			binary.BigEndian.PutUint16(buf[offset:offset+2], uint16(len(l)))
-			offset += 2
-			copy(buf[offset:], l)
-			offset += len(l)
-		}
-		padding := make([]byte, FixedPacketSize-size)
-		rand.Read(padding)
-		return append(buf, padding...)
+		size += 2 + len(l) // len_prefix(2) + layer_data
 	}
 
-	// 无需填充
-	buf := make([]byte, size)
+	// 始终填充到 FixedPacketSize 的整数倍 (流量分析抵抗)
+	paddedSize := ((size + FixedPacketSize - 1) / FixedPacketSize) * FixedPacketSize
+	if paddedSize < FixedPacketSize {
+		paddedSize = FixedPacketSize
+	}
+
+	buf := make([]byte, paddedSize)
 	copy(buf[0:CircuitIDSize], p.CircuitID[:])
-	buf[CircuitIDSize] = byte(p.PathLen)
-	offset := CircuitIDSize + 1
+	
+	offset := CircuitIDSize
 	for _, l := range p.Layers {
 		binary.BigEndian.PutUint16(buf[offset:offset+2], uint16(len(l)))
 		offset += 2
 		copy(buf[offset:], l)
 		offset += len(l)
 	}
+
+	// 剩余部分自然为零填充 (nil slice 初始化)
 	return buf
 }
 
 // ParseOnion 从有线格式反序列化洋葱数据包。
-// 多余的字节（填充）会被静默忽略。
+// path_len 不再明文暴露——通过解析所有连续加密层推断。
+// 零长度层标记结束，剩余字节为填充。
 func ParseOnion(data []byte) (*Packet, error) {
-	if len(data) < CircuitIDSize+3 {
+	if len(data) < CircuitIDSize+2 {
 		return nil, fmt.Errorf("onion: packet too short: %d bytes", len(data))
 	}
 
 	pkt := &Packet{}
 	copy(pkt.CircuitID[:], data[0:CircuitIDSize])
-	pkt.PathLen = int(data[CircuitIDSize])
-	if pkt.PathLen == 0 || pkt.PathLen > MaxHops {
-		return nil, fmt.Errorf("onion: invalid path length: %d (max=%d)", pkt.PathLen, MaxHops)
-	}
 
-	offset := CircuitIDSize + 1
-	pkt.Layers = make([][]byte, 0, pkt.PathLen)
-
-	for i := 0; i < pkt.PathLen; i++ {
-		if offset+2 > len(data) {
-			return nil, fmt.Errorf("onion: truncated layer %d header", i)
-		}
+	offset := CircuitIDSize
+	for offset+2 <= len(data) {
 		layerLen := int(binary.BigEndian.Uint16(data[offset : offset+2]))
 		offset += 2
+		if layerLen == 0 {
+			break // 零长度标记层结束 → 后续为填充
+		}
 		if offset+layerLen > len(data) {
-			// 末尾的填充字节 — 可接受，直接截断
-			break
+			break // 填充区域，截断
 		}
 		layer := make([]byte, layerLen)
 		copy(layer, data[offset:offset+layerLen])
 		pkt.Layers = append(pkt.Layers, layer)
 		offset += layerLen
+
+		if len(pkt.Layers) > MaxHops {
+			return nil, fmt.Errorf("onion: too many layers: %d (max %d)", len(pkt.Layers), MaxHops)
+		}
 	}
 
-	if len(pkt.Layers) != pkt.PathLen {
-		return nil, fmt.Errorf("onion: expected %d layers, got %d (padding?)", pkt.PathLen, len(pkt.Layers))
+	pkt.PathLen = len(pkt.Layers)
+	if pkt.PathLen == 0 {
+		return nil, fmt.Errorf("onion: no layers found")
 	}
 
 	return pkt, nil

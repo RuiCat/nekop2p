@@ -28,6 +28,9 @@ type NoteWitness struct {
 	Commitment  frontend.Variable
 	MerkleProof merkle.MerkleProof
 	Active      frontend.Variable
+	// SerialInverse[j] 提供与 OutputNotes[j].Serial 差的逆元
+	// 用于约束活跃输出票据必须具有不同的序列号 (防双花)
+	SerialInverse [MaxOutputNotes]frontend.Variable
 }
 
 func (c *Circuit) Define(api frontend.API) error {
@@ -58,6 +61,22 @@ func (c *Circuit) Define(api frontend.API) error {
 		h3.Write(o.OwnerKey)
 		h3.Write(o.Serial)
 		api.AssertIsEqual(o.Commitment, h3.Sum())
+	}
+
+	// 输出票据序列号唯一性约束: 活跃票据的 Serial 必须互不相同
+	// 使用逆元技巧: 若 bothActive=1 则 diff*diff_inv=1 → diff≠0
+	one := frontend.Variable(1)
+	zero := frontend.Variable(0)
+	for i := 0; i < MaxOutputNotes; i++ {
+		for j := i + 1; j < MaxOutputNotes; j++ {
+			bothActive := api.Mul(c.OutputNotes[i].Active, c.OutputNotes[j].Active)
+			diff := api.Sub(c.OutputNotes[i].Serial, c.OutputNotes[j].Serial)
+			// 约束: bothActive * (diff * serial_inv - 1) == 0
+			api.AssertIsEqual(
+				api.Mul(bothActive, api.Sub(api.Mul(diff, c.OutputNotes[i].SerialInverse[j]), one)),
+				zero,
+			)
+		}
 	}
 
 	api.AssertIsLessOrEqual(api.Add(c.LoanAmount, outputSum), inputSum)

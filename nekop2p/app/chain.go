@@ -117,12 +117,23 @@ func (app *NekoApp) executeTx(tx *Tx) {
 			}
 		}
 	case "repay":
-		// Data = payer(32) + amount(8)
+		// Data = payer(32) + amount(8) + [loan_id(32)] (可选暗链贷款ID)
 		if len(tx.Data) >= 40 {
 			amt := uint64(tx.Data[32])<<56 | uint64(tx.Data[33])<<48 | uint64(tx.Data[34])<<40 | uint64(tx.Data[35])<<32 |
 				uint64(tx.Data[36])<<24 | uint64(tx.Data[37])<<16 | uint64(tx.Data[38])<<8 | uint64(tx.Data[39])
 			if err := app.BrightChainKeeper.CollectFees(nil, amt); err != nil {
 				log.Printf("[chain] collect fees failed: %v", err)
+			}
+			// 如果附带暗链贷款ID，触发暗链结算
+			if len(tx.Data) >= 72 {
+				loanID := string(tx.Data[40:72])
+				if _, err := app.DarkChainKeeper.SettleLoan(&darktypes.MsgSettleLoan{
+					LoanID: loanID,
+				}); err != nil {
+					log.Printf("[chain] settle loan failed for %s: %v", loanID[:16], err)
+				} else {
+					log.Printf("[chain] loan %s settled via bright chain repay", loanID[:16])
+				}
 			}
 		}
 	case "loan":

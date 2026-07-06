@@ -65,7 +65,7 @@ func (vn *VirtualNode) AcceptOne(t *testing.T) *VirtualPeer {
 	if err != nil {
 		t.Fatalf("[%s] accept: %v", vn.Name, err)
 	}
-	hs := noise.NewResponderIK(&vn.Keys.RecvKey, nil, noise.RoleFriend)
+	hs := noise.NewResponderIK(&vn.Keys.RecvKey, [32]byte{}, noise.RoleFriend)
 	buf := make([]byte, 8192)
 	nr, _ := conn.Read(buf)
 	hs.ReadMessage(buf[:nr])

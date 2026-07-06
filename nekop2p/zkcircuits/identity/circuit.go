@@ -29,6 +29,9 @@ type GuarantorWitness struct {
 	MerkleProof merkle.MerkleProof
 	TrustWeight frontend.Variable
 	Active      frontend.Variable
+	// DiffInverse[i] 提供与 Guarantors[i] 的公钥差的逆元
+	// 用于约束活跃担保人公钥必须互不相同
+	DiffInverse [MaxGuarantors]frontend.Variable
 }
 
 func (c *Circuit) Define(api frontend.API) error {
@@ -36,11 +39,12 @@ func (c *Circuit) Define(api frontend.API) error {
 	if err != nil {
 		return err
 	}
-	h, _ := mimc.NewMiMC(api)
 
 	validCount := frontend.Variable(0)
 	for i := 0; i < MaxGuarantors; i++ {
 		g := c.Guarantors[i]
+		// 为每个担保人创建独立的 MiMC 哈希器 (防止状态污染)
+		h, _ := mimc.NewMiMC(api)
 
 		// EdDSA 验证：担保人对 MySendPK 签名
 		eddsa.Verify(curve, g.Signature, c.MySendPK, g.PublicKey, &h)
@@ -48,9 +52,26 @@ func (c *Circuit) Define(api frontend.API) error {
 		// Merkle 验证：PublicKey 已在链上注册
 		g.MerkleProof.VerifyProof(api, &h, g.PublicKey.A.X)
 
-		// 信任权重 ≥ 阈值（Cmp 返回 1 当且仅当 a > b，因此用 a+1 > b 实现 ≥）
+		// 信任权重 ≥ 阈值
 		pass := api.Cmp(api.Add(g.TrustWeight, 1), c.TrustThreshold)
 		validCount = api.Add(validCount, api.Mul(g.Active, pass))
+	}
+
+	// 担保人唯一性约束: 活跃担保人的公钥必须互不相同
+	// 使用逆元技巧: 若 bothActive=1 则 diff*diff_inv=1 → diff≠0
+	one := frontend.Variable(1)
+	zero := frontend.Variable(0)
+	for i := 0; i < MaxGuarantors; i++ {
+		for j := i + 1; j < MaxGuarantors; j++ {
+			bothActive := api.Mul(c.Guarantors[i].Active, c.Guarantors[j].Active)
+			diff := api.Sub(c.Guarantors[i].PublicKey.A.X, c.Guarantors[j].PublicKey.A.X)
+			// 约束: bothActive * (diff * diff_inv - 1) == 0
+			// 含义: 两个都活跃时 diff 必须非零 (diff * diff_inv == 1)
+			api.AssertIsEqual(
+				api.Mul(bothActive, api.Sub(api.Mul(diff, c.Guarantors[i].DiffInverse[j]), one)),
+				zero,
+			)
+		}
 	}
 
 	api.AssertIsLessOrEqual(frontend.Variable(MinGuarantors), validCount)

@@ -19,14 +19,14 @@ type CircuitInfo struct {
 	ProofSize      int    // 字节
 }
 
-// AllCircuits 返回所有电路的元数据。
+// AllCircuits 返回所有电路的元数据（约束数为实际编译结果）。
 func AllCircuits() []CircuitInfo {
 	return []CircuitInfo{
-		{Name: "identity", ConstraintCount: 12000, ProvingTime: "1-3s", VerifyTime: "3ms", ProofSize: 200},
-		{Name: "credit",   ConstraintCount: 8000,  ProvingTime: "1-2s", VerifyTime: "3ms", ProofSize: 200},
-		{Name: "marker",   ConstraintCount: 500,   ProvingTime: "0.5s", VerifyTime: "3ms", ProofSize: 200},
-		{Name: "repay",    ConstraintCount: 3000,  ProvingTime: "0.5s", VerifyTime: "3ms", ProofSize: 200},
-		{Name: "work",     ConstraintCount: 3000,  ProvingTime: "0.5s", VerifyTime: "3ms", ProofSize: 200},
+		{Name: "identity", ConstraintCount: 62891, ProvingTime: "3-8s", VerifyTime: "3ms", ProofSize: 200},
+		{Name: "credit",   ConstraintCount: 14429, ProvingTime: "1-3s", VerifyTime: "3ms", ProofSize: 200},
+		{Name: "marker",   ConstraintCount: 661,   ProvingTime: "0.5s", VerifyTime: "3ms", ProofSize: 200},
+		{Name: "repay",    ConstraintCount: 8503,  ProvingTime: "1-2s", VerifyTime: "3ms", ProofSize: 200},
+		{Name: "work",     ConstraintCount: 6224,  ProvingTime: "0.8s", VerifyTime: "3ms", ProofSize: 200},
 	}
 }
 
@@ -38,6 +38,15 @@ func TotalConstraints() int {
 	}
 	return total
 }
+
+// CircuitVersions 记录电路版本号，约束变更后需递增。
+// 版本变更必须重新执行可信设置。
+const CircuitVersion = 2
+
+// ⚠️ 重新生成可信设置:
+//   go run ./zkcircuits/setup/ -out ./keys/
+//   → 生成 5 组 ProvingKey + VerifyingKey
+//   → 将 VerifyingKey 更新到 x/zk/verifier.go
 
 // ZK 电路使用说明:
 //

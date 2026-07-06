@@ -151,17 +151,19 @@ func NewInitiatorIK(initiatorStatic *crypto.KeyPair, responderStatic *[32]byte, 
 }
 
 // NewResponderIK 以应答方身份启动一个 Noise_IK 握手。
-// expectedInitiatorStatic 如果非 nil，握手完成后会验证发起方静态公钥是否匹配。
-func NewResponderIK(responderStatic *crypto.KeyPair, expectedInitiatorStatic *[32]byte, roleStr string) *HandshakeState {
+// expectedInitiatorStatic 是预期的发起方静态公钥，握手完成后验证。
+// 必须提供非零值以确保双向认证——这是 IK 模式的安全基础。
+func NewResponderIK(responderStatic *crypto.KeyPair, expectedInitiatorStatic [32]byte, roleStr string) *HandshakeState {
 	prologue := buildPrologue(roleStr)
+	var zeroPK [32]byte
 	hs := &HandshakeState{
 		role:     RoleResponder,
 		pattern:  "IK",
 		prologue: prologue,
 		s:        responderStatic,
 	}
-	if expectedInitiatorStatic != nil {
-		hs.rs = *expectedInitiatorStatic
+	if expectedInitiatorStatic != zeroPK {
+		hs.rs = expectedInitiatorStatic
 	}
 	hs.initialize()
 	return hs
@@ -237,7 +239,9 @@ func (hs *HandshakeState) ReadMessage(message []byte) ([]byte, error) {
 }
 
 // Complete 返回握手完成后的最终 CipherState。
+// 按照 Noise 规范，Split() 在整个握手完成后只调用一次。
 func (hs *HandshakeState) Complete() *HandshakeResult {
+	hs.split() // 仅在握手完成时调用一次
 	result := &HandshakeResult{RemoteStatic: hs.rs}
 	if hs.role == RoleInitiator {
 		result.SendCipher = hs.cs1
@@ -313,8 +317,6 @@ func (hs *HandshakeState) writeIKMessage1(payload []byte) ([]byte, error) {
 	msg = append(msg, encryptedS...)
 	msg = append(msg, encryptedPayload...)
 
-	// Split: cs1 = 发送, cs2 = 接收
-	hs.split()
 	return msg, nil
 }
 
@@ -352,7 +354,6 @@ func (hs *HandshakeState) writeIKMessage2(payload []byte) ([]byte, error) {
 	msg = append(msg, hs.e.Public[:]...)
 	msg = append(msg, encryptedPayload...)
 
-	hs.split()
 	return msg, nil
 }
 
@@ -405,7 +406,6 @@ func (hs *HandshakeState) readIKMessage1(message []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decrypt payload: %w: %w", ErrDecryptFailed, err)
 	}
 
-	hs.split()
 	return payload, nil
 }
 
@@ -440,7 +440,6 @@ func (hs *HandshakeState) readIKMessage2(message []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decrypt payload: %w: %w", ErrDecryptFailed, err)
 	}
 
-	hs.split()
 	return payload, nil
 }
 
@@ -489,7 +488,6 @@ func (hs *HandshakeState) writeNKMessage1(payload []byte) ([]byte, error) {
 	msg = append(msg, hs.e.Public[:]...)
 	msg = append(msg, encryptedPayload...)
 
-	hs.split()
 	return msg, nil
 }
 
@@ -518,7 +516,6 @@ func (hs *HandshakeState) writeNKMessage2(payload []byte) ([]byte, error) {
 	msg = append(msg, hs.e.Public[:]...)
 	msg = append(msg, encryptedPayload...)
 
-	hs.split()
 	return msg, nil
 }
 
@@ -541,7 +538,6 @@ func (hs *HandshakeState) readNKMessage1(message []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decrypt payload: %w: %w", ErrDecryptFailed, err)
 	}
 
-	hs.split()
 	return payload, nil
 }
 
@@ -564,13 +560,41 @@ func (hs *HandshakeState) readNKMessage2(message []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decrypt payload: %w: %w", ErrDecryptFailed, err)
 	}
 
-	hs.split()
 	return payload, nil
 }
 
 // === 核 心 操 作 ===
 
+// isLowOrderPoint 检查 Curve25519 公钥是否为小阶子群元素（阶为 1/2/4/8）。
+// 攻击者使用低阶点可导致 DH 输出可预测，破坏 NK 模式的前向安全性。
+func isLowOrderPoint(pub *[32]byte) bool {
+	// Curve25519 小阶子群元素（RFC 7748 §5.1）
+	// 这些点在标量乘法下产生低熵输出
+	lowOrderPoints := [][32]byte{
+		// order = 1 (the identity)
+		{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		// order = 2
+		{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+	}
+	for _, lo := range lowOrderPoints {
+		if *pub == lo {
+			return true
+		}
+	}
+	return false
+}
+
 func (hs *HandshakeState) dh(priv, pub *[32]byte) ([]byte, error) {
+	// 拒绝低阶点公钥 — 防止会话密钥可预测攻击 (NK 模式)
+	if isLowOrderPoint(pub) {
+		return nil, fmt.Errorf("%w: low-order point rejected", ErrDHFailed)
+	}
 	shared, err := curve25519.X25519(priv[:], pub[:])
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDHFailed, err)

@@ -13,7 +13,7 @@ func TestNoiseIKHandshake(t *testing.T) {
 
 	// Bob 以 IK 模式向 Alice 发起握手
 	bobHS := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
-	aliceHS := noise.NewResponderIK(aliceKey, nil, noise.RoleFriend)
+	aliceHS := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend)
 
 	// IK msg1: Bob → Alice
 	msg1, err := bobHS.WriteMessage([]byte("hello from bob"))
@@ -61,7 +61,7 @@ func TestNoiseIKEncryptedTransport(t *testing.T) {
 	bobKey, _ := crypto.GenerateEphemeralKey()
 
 	bobHS := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
-	aliceHS := noise.NewResponderIK(aliceKey, nil, noise.RoleFriend)
+	aliceHS := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend)
 
 	msg1, _ := bobHS.WriteMessage(nil)
 	aliceHS.ReadMessage(msg1)
@@ -150,7 +150,7 @@ func TestNoisePrologueSeparation(t *testing.T) {
 
 	// 相同密钥但不同角色 → 产生不同的会话密钥
 	bobFriend := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
-	aliceFriend := noise.NewResponderIK(aliceKey, nil, noise.RoleFriend)
+	aliceFriend := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend)
 
 	msg1, _ := bobFriend.WriteMessage(nil)
 	aliceFriend.ReadMessage(msg1)
@@ -161,7 +161,7 @@ func TestNoisePrologueSeparation(t *testing.T) {
 
 	// 现在用不同角色尝试同一对密钥
 	bobPadding := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RolePadding)
-	alicePadding := noise.NewResponderIK(aliceKey, nil, noise.RolePadding)
+	alicePadding := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RolePadding)
 
 	msg1b, _ := bobPadding.WriteMessage(nil)
 	alicePadding.ReadMessage(msg1b)

@@ -1,102 +1,163 @@
-// proto/nekop2p/brightchain/types.proto
-//
-// 明域模块：用户块、担保、资金池管理。
-// 这是"阳光市场"域 — 所有数据公开可见。
-// chain_id 是假名的（类似比特币地址）。
 syntax = "proto3";
 
 package nekop2p.brightchain;
 
 option go_package = "github.com/nekop2p/nekop2p/x/brightchain/types";
 
-// ===== 用户块 =====
-// 每个用户在链上拥有一个用户块。它存储密钥、好友、信用和
-// 担保关系。只有所有者（send_sk 持有者）可以更新它。
-// 该块是用户的主权数据 — 导入 keys.json 即可恢复一切。
+import "gogoproto/gogo.proto";
+import "cosmos/base/v1beta1/coin.proto";
 
-message UserBlock {
-    string address = 1;           // bech32 编码的 chain_id
-    uint64 account_number = 2;
-    uint64 sequence = 3;          // 交易 nonce（防重放）
+// ============================================================
+// BrightChain 自定义账户类型 (UserBlock)
+// 每个用户拥有一个链上数据块，只能被自己更新
+// ============================================================
 
-    // 身份密钥（公开 — 存储在链上）
-    bytes recv_pk = 4;            // Curve25519 (32B) — 加密发送给此用户的消息
-    bytes send_pk = 5;            // Ed25519 (32B) — 验证来自此用户的签名
+message BrightAccount {
+    // === 继承 Cosmos BaseAccount ===
+    string   address        = 1;  // chain_id 的 bech32 编码
+    uint64   account_number = 2;
+    uint64   sequence       = 3;  // 交易序号 (防重放)
 
-    // 信用系统
-    uint64 credit_score = 6;      // 0-10000
-    uint64 trust_weight = 7;      // Σ(担保人信任 × 衰减)
-    uint64 total_repay_amount = 8; // 终身还款历史
-    uint64 credit_limit = 9;      // = total_repay_amount × 系数（≤1.0）
+    // === 双密钥 (密码学根) ===
+    bytes    recv_pk = 4;  // 32B: Curve25519 公钥 (别人加密给我)
+    bytes    send_pk = 5;  // 32B: Ed25519 公钥 (验证我的签名)
 
-    // 种子阶段
-    bool seed_phase = 10;         // true 直到第一笔种子贷款还清
-    repeated bytes guarantors = 11;  // 我的担保人的 chain_ids
+    // === 信誉系统 ===
+    uint64   credit_score       = 6;
+    uint64   trust_weight       = 7;
+    uint64   total_repay_amount = 8;
+    uint64   credit_limit       = 9;
 
-    // 节点角色
-    NodeRole node_role = 12;      // NONE | PUBLIC | OFFICIAL_RELAY | OFFICIAL_RECORD
-    int64 node_term_start = 13;   // unix 时间戳
-    int64 node_term_end = 14;
+    // === 种子期标记 ===
+    bool     seed_phase  = 10;
+    repeated bytes guarantors = 11;  // 担保人 chain_id 列表
 
-    // 社交图谱（存储在链上，用户主权）
+    // === 节点角色 ===
+    NodeRole node_role       = 12;
+    int64    node_term_start = 13;
+    int64    node_term_end   = 14;
+
+    // === 好友列表 (链上存储，用户签名更新) ===
     repeated FriendRecord friends = 15;
-    repeated BondRef guaranteed_of = 16;   // 我担保的人
-    repeated BondRef guaranteed_by = 17;   // 担保我的人
+
+    // === 担保关系 ===
+    repeated BondRef guaranteed_of = 16;  // 我担保了谁
+    repeated BondRef guaranteed_by = 17;  // 谁担保了我
 }
 
 enum NodeRole {
-    NONE = 0;
-    PUBLIC = 1;
-    OFFICIAL_RELAY = 2;
-    OFFICIAL_RECORD = 3;
+    NODE_ROLE_UNSPECIFIED = 0;
+    NODE_ROLE_NONE        = 1;  // 普通用户
+    NODE_ROLE_FORMAL      = 2;  // 正式节点
+    NODE_ROLE_CANDIDATE   = 3;  // 候选人
+    NODE_ROLE_BLACKLISTED = 4;  // 黑名单
 }
 
 message FriendRecord {
-    bytes chain_id = 1;
-    bytes recv_pk = 2;
-    bytes send_pk = 3;
-    uint32 trust_dist = 4;       // 1 = 直接，2 = 介绍
-    int64 added_at = 5;
-    bytes introduced_by = 6;     // 介绍人的 chain_id（如果 trust_dist=2）
+    bytes    chain_id      = 1;
+    bytes    recv_pk       = 2;  // 好友的接收公钥
+    bytes    send_pk       = 3;  // 好友的发送公钥
+    uint32   trust_dist    = 4;  // 1=直接好友 2=好友介绍
+    int64    added_at      = 5;
+    bytes    introduced_by = 6;  // 介绍人 chain_id (trust_dist=2时)
 }
 
 message BondRef {
-    string bond_id = 1;
-    bytes other_party = 2;
+    string   bond_id     = 1;
+    bytes    other_party = 2;  // 对方 chain_id
 }
 
-// ===== 担保债券 =====
-// 当 Alice 担保 Bob 时，Alice 锁定信用票据作为抵押。
-// 该债券公开可见（chain_id 级别，非真实身份）。
+// ============================================================
+// 担保债券
+// ============================================================
 
 message GuaranteeBond {
-    string bond_id = 1;
-    bytes inviter = 2;            // Alice 的 chain_id
-    bytes invitee = 3;            // Bob 的 chain_id
-    repeated bytes locked_note_commitments = 4;  // 作为抵押锁定的信用票据
-    uint64 total_bond = 5;        // 总锁定价值
-    uint64 coefficient = 6;       // ≤ 1.0，种子额度 = total_bond × 系数
-    uint64 seed_limit = 7;        // Bob 从此债券获得的信用额度
-    int64 locked_at = 8;
-    int64 unlock_at = 9;          // 自动释放日期（或还款后提前释放）
-    BondStatus status = 10;
+    string   bond_id          = 1;
+    bytes    inviter          = 2;  // 担保人
+    bytes    invitee          = 3;  // 被担保人
+    uint64   amount           = 4;  // 质押金额
+    repeated bytes bond_notes = 5;  // 质押的信用票据ID列表
+    double   coefficient      = 6;  // 额度转换系数 ≤ 1.0
+    int64    lock_period_days = 7;  // 锁定天数
+    BondStatus status         = 8;
+    int64    created_at       = 9;
 }
 
 enum BondStatus {
-    ACTIVE = 0;
-    RELEASED = 1;
-    FORFEITED = 2;
+    BOND_STATUS_UNSPECIFIED = 0;
+    BOND_STATUS_ACTIVE      = 1;
+    BOND_STATUS_RELEASED    = 2;
+    BOND_STATUS_FORFEITED   = 3;
 }
 
-// ===== 资金池 =====
-// 共享基金。收取交易手续费，支付节点工资。
-// 不发放贷款 — 种子贷款来自担保债券。
+// ============================================================
+// 交易消息
+// ============================================================
 
-message Pool {
-    uint64 total_balance = 1;
-    uint64 salary_relay = 2;      // 中继节点工资预算
-    uint64 salary_record = 3;     // 记录节点工资预算
-    uint64 seed_loan_reserve = 4; // 应急种子贷款储备（遗留）
-    uint64 bad_debt_reserve = 5;  // 递归责任兜底
-    uint64 community = 6;         // 基础设施维护
+message MsgRegister {
+    string   sender          = 1;
+    bytes    recv_pk         = 2;  // 接收公钥
+    bytes    send_pk         = 3;  // 发送公钥
+    bytes    zk_proof        = 4;  // ZK身份证明 (≥3担保人)
+    repeated bytes guarantor_sigs = 5;  // 担保人链下签名
+    repeated bytes invite_creds   = 6;  // 邀请凭证 (线下邀请)
+}
+
+message MsgRepay {
+    string                sender          = 1;
+    repeated cosmos.base.v1beta1.Coin amount = 2;  // 还款碎片金额
+    bytes                 zk_repay_proof  = 3;  // ZK还款证明
+    bytes                 inkwell_ref     = 4;  // 混沌结算参考号
+}
+
+message MsgUpdateFriends {
+    string   sender           = 1;
+    repeated FriendRecord add = 2;  // 新增好友
+    repeated bytes      remove = 3;  // 移除好友
+}
+
+message MsgGuarantee {
+    string   sender           = 1;  // 担保人
+    string   invitee          = 2;  // 被担保人
+    repeated bytes bond_notes = 3;  // 质押票据
+    double   coefficient      = 4;
+    int64    lock_period_days = 5;
+    bytes    zk_legitimate    = 6;  // ZK证明: 合法担保人
+}
+
+message MsgReleaseBond {
+    string   sender  = 1;
+    string   bond_id = 2;
+}
+
+message MsgForfeitBond {
+    string   sender  = 1;
+    string   bond_id = 2;
+}
+
+// ============================================================
+// 查询
+// ============================================================
+
+message QueryUserRequest {
+    bytes chain_id = 1;
+}
+
+message QueryUserResponse {
+    BrightAccount account = 1;
+}
+
+message QueryPoolRequest {}
+
+message QueryPoolResponse {
+    uint64 balance = 1;
+}
+
+message QueryBondsRequest {
+    bytes chain_id = 1;
+}
+
+message QueryBondsResponse {
+    repeated GuaranteeBond as_inviter = 1;  // 作为担保人的债券
+    repeated GuaranteeBond as_invitee = 2;  // 作为被担保人的债券
 }

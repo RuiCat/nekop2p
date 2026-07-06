@@ -16,7 +16,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
-	"sort"
 	"time"
 )
 
@@ -52,8 +51,11 @@ type FragmentPlan struct {
 // GenerateParams 为新贷款创建混沌结算参数。
 //
 // seed = SHA256(borrower_seed || lender_seed)
-// 这确保双方都贡献了随机性，任何一方都不能
-// 单方面预测分片计划。
+// 这确保双方都贡献了随机性，任何一方都不能单方面预测分片计划。
+//
+// ⚠️ 安全要求: 借贷双方必须在调用此函数之前通过 commit-reveal 协议
+// (SeedCommit/SeedReveal) 安全交换种子。直接交换种子存在最后一动者优势——
+// 后出手方可以看到对方种子后选择自己的种子以操纵还款计划。
 //
 // 注意：now 应该是双方都认可的时间戳（如贷款创建时的区块时间戳），
 // 而非本地时钟。使用本地 time.Now() 会导致双方计算出的还款窗口不一致。
@@ -182,7 +184,7 @@ func (p *Params) RemainingAmount(paidIndices []int) uint64 {
 }
 
 // splitAmount 将总金额拆分为 count 个总和等于 total 的随机分片。
-// 使用随机化方法：分配随机权重，归一化，分配。
+// 使用基于随机权重的归一化方法，确保总和精确且无零分片。
 func splitAmount(total uint64, count int, rng *rngSource) []uint64 {
 	if count <= 0 {
 		return nil
@@ -190,42 +192,46 @@ func splitAmount(total uint64, count int, rng *rngSource) []uint64 {
 	if count == 1 {
 		return []uint64{total}
 	}
-
-	// 生成随机分割点
-	points := make([]uint64, count-1)
-	for i := range points {
-		points[i] = uint64(rng.Int63n(int64(total)))
+	if total == 0 {
+		fragments := make([]uint64, count)
+		return fragments
 	}
 
-	// 排序分割点
-	sort.Slice(points, func(i, j int) bool {
-		return points[i] < points[j]
-	})
+	// 为每个分片生成随机权重 (1~1000)
+	weights := make([]uint64, count)
+	var sumWeights uint64
+	for i := range weights {
+		weights[i] = uint64(rng.Int63n(1000)) + 1 // 避免零权重
+		sumWeights += weights[i]
+	}
 
-	// 根据分割点之间的间隔计算分片大小
+	// 按权重分配
 	fragments := make([]uint64, count)
-	prev := uint64(0)
-	for i := 0; i < count-1; i++ {
-		fragments[i] = points[i] - prev
-		prev = points[i]
+	var allocated uint64
+	for i := 0; i < count; i++ {
+		fragments[i] = total * weights[i] / sumWeights
+		allocated += fragments[i]
 	}
-	fragments[count-1] = total - prev
 
-	// 确保没有零分片（同时保持总和不变）
+	// 将舍入误差加入最后一个分片 (保持总和精确)
+	if total > allocated {
+		fragments[count-1] += total - allocated
+	}
+
+	// 确保没有零分片 (极小金额情况)
 	for i := range fragments {
-		if fragments[i] == 0 {
+		if fragments[i] == 0 && total > uint64(count) {
 			fragments[i] = 1
-			// 从最大的分片中借1
-			maxIdx := 0
+			// 从最大分片借1
+			maxIdx := count - 1
 			for j := range fragments {
 				if fragments[j] > fragments[maxIdx] {
 					maxIdx = j
 				}
 			}
-			if fragments[maxIdx] > 1 {
+			if maxIdx != i && fragments[maxIdx] > 1 {
 				fragments[maxIdx]--
 			}
-			// 如果所有分片都是1，总和会多1，但这是极小金额的边缘情况
 		}
 	}
 
@@ -273,3 +279,41 @@ func (r *rngSource) Int63n(n int64) int64 {
 
 // --- 确定性随机数生成器（基于 SHA256）---
 // 种子由借贷双方协商，确保混沌参数可复现。
+
+// ============================================================
+// 种子协商协议 (Commit-Reveal)
+//
+// 借贷双方通过 commit-reveal 安全交换种子，防止最后一动者优势：
+//   1. 双方各生成 (seed, nonce)
+//   2. 双方交换 commit = SHA256(seed || nonce)
+//   3. 收到对方 commit 后，双方揭示 (seed, nonce)
+//   4. 验证对方揭示与承诺匹配
+//   5. 合并种子 = SHA256(b_seed || l_seed)
+// ============================================================
+
+// SeedCommit 是种子协商的承诺阶段。
+// commit = SHA256(seed || party_id || nonce) 绑定到特定参与者。
+func SeedCommit(seed, nonce [32]byte, partyID string) [32]byte {
+	h := sha256.New()
+	h.Write(seed[:])
+	h.Write([]byte(partyID))
+	h.Write(nonce[:])
+	return [32]byte(h.Sum(nil))
+}
+
+// SeedReveal 验证揭示的种子是否匹配之前的承诺。
+// 返回 true 如果 SHA256(seed || party_id || nonce) == commit。
+func SeedReveal(commit, seed, nonce [32]byte, partyID string) bool {
+	computed := SeedCommit(seed, nonce, partyID)
+	return computed == commit
+}
+
+// CombineSeeds 合并双方种子生成最终混沌参数种子。
+// combined = SHA256(borrower_seed || lender_seed)
+// 此函数应在双方完成 commit-reveal 后调用。
+func CombineSeeds(borrowerSeed, lenderSeed [32]byte) [32]byte {
+	combined := make([]byte, 64)
+	copy(combined[:32], borrowerSeed[:])
+	copy(combined[32:], lenderSeed[:])
+	return sha256.Sum256(combined)
+}

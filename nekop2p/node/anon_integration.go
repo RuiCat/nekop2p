@@ -1,6 +1,8 @@
 package node
 
 import (
+	"crypto/rand"
+
 	"github.com/nekop2p/nekop2p/anon"
 	"github.com/nekop2p/nekop2p/frame"
 	"github.com/nekop2p/nekop2p/onion"
@@ -56,7 +58,9 @@ func (n *Node) sendOnionRouted(target peer.ChainID, plaintext []byte, hops int) 
 	tgt := onion.Target{IPv6: targetIP, Port: targetPort}
 
 	var circuitID [16]byte
-	copy(circuitID[:], target[:16])
+	if _, err := rand.Read(circuitID[:]); err != nil {
+		return n.SendMessage(target, plaintext)
+	}
 	pkt, err := onion.Build(circuitID, path, tgt, plaintext)
 	if err != nil {
 		return n.SendMessage(target, plaintext)

@@ -52,7 +52,7 @@ func DefaultRelayExamConfig() ExamConfig {
 		MinTrustWeight:    500,
 		MinOnlineDuration: 90 * 24 * time.Hour, // 3 个月
 		MinRelayCount:     10000,
-		PassScore:         75, // 4 项中通过 3 项即可
+		PassScore:         75, // 3 项中通过 2 项即可 (75% ≈ 67%, 实际需全过)
 	}
 }
 
@@ -62,7 +62,7 @@ func DefaultRecordExamConfig() ExamConfig {
 		MinTrustWeight:    1000,
 		MinOnlineDuration: 90 * 24 * time.Hour, // 3 个月
 		MinStorageProofs:  100,
-		PassScore:         75, // 4 项中通过 3 项即可
+		PassScore:         75, // 3 项中通过 2 项即可 (75% ≈ 67%, 实际需全过)
 	}
 }
 
@@ -101,29 +101,27 @@ func (e *Examiner) Evaluate(candidateID string, examType ExamType,
 		CompletedAt: time.Now(),
 	}
 
-	// 逐项评分
+	// 逐项评分 (3 项: 信任权重 + 在线时长 + 专项能力)
 	var checksPassed int
 	totalChecks := 3
 
-	// 信任权重检查
+	// 1. 信任权重检查
 	if trustWeight >= cfg.MinTrustWeight {
 		checksPassed++
 	}
 
-	// 在线时长检查
+	// 2. 在线时长检查
 	if onlineDuration >= cfg.MinOnlineDuration {
 		checksPassed++
 	}
 
-	// 专项能力检查
+	// 3. 专项能力检查
 	switch examType {
 	case ExamRelay:
-		totalChecks = 4
 		if relayCount >= cfg.MinRelayCount {
 			checksPassed++
 		}
 	case ExamRecord:
-		totalChecks = 4
 		if storageProofs >= cfg.MinStorageProofs {
 			checksPassed++
 		}
