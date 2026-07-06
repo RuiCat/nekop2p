@@ -1,0 +1,213 @@
+package app
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/nekop2p/nekop2p/consensus"
+	brighttypes "github.com/nekop2p/nekop2p/x/brightchain/types"
+	darktypes "github.com/nekop2p/nekop2p/x/darkchain/types"
+)
+
+// ChainConfig 链运行配置。
+type ChainConfig struct {
+	BlockInterval time.Duration // 出块间隔（默认 2s）
+	IsValidator   bool          // 是否为验证者
+}
+
+// DefaultChainConfig 返回默认链配置。
+func DefaultChainConfig() ChainConfig {
+	return ChainConfig{
+		BlockInterval: 2 * time.Second,
+		IsValidator:   true,
+	}
+}
+
+// RunChain 启动链运行循环。
+// 阻塞直到 ctx 被取消。
+func (app *NekoApp) RunChain(cfg ChainConfig) {
+	engine := consensus.NewSimpleEngine(cfg.BlockInterval, cfg.IsValidator)
+
+	// 从持久化恢复区块高度
+	savedHeight := app.BrightChainKeeper.Height()
+	if savedHeight > 0 {
+		log.Printf("[chain] 从持久化恢复高度: %d", savedHeight)
+		app.currentHeight = savedHeight
+	}
+
+	if err := engine.Start(); err != nil {
+		log.Printf("[chain] 共识引擎启动失败: %v", err)
+		return
+	}
+	defer engine.Stop()
+
+	blockCh := engine.SubscribeBlocks()
+	log.Printf("[chain] 链运行中，出块间隔: %s", cfg.BlockInterval)
+
+	for event := range blockCh {
+		app.processBlock(event)
+	}
+}
+
+// processBlock 处理一个区块。
+func (app *NekoApp) processBlock(event consensus.BlockEvent) {
+	startTime := time.Now()
+
+	// 1. BeginBlock
+	app.BeginBlocker(nil)
+
+	// 2. 从 MemPool 取出交易并执行
+	txs := app.mempool.Drain(100)
+	txIDs := make([]string, len(txs))
+	for i, tx := range txs {
+		app.executeTx(tx)
+		txIDs[i] = tx.ID
+	}
+	// 标记已执行的交易为已确认
+	if len(txIDs) > 0 {
+		app.ConfirmTxs(txIDs, app.currentHeight)
+	}
+
+	// 3. EndBlock
+	app.EndBlocker(nil)
+
+	elapsed := time.Since(startTime)
+	if app.currentHeight <= 5 || app.currentHeight%100 == 0 || elapsed > 100*time.Millisecond {
+		log.Printf("[chain] 区块 #%d | 交易: %d | 耗时: %v | 用户: %d | 贷款: %d",
+			app.currentHeight, len(txs), elapsed,
+			len(app.BrightChainKeeper.GetAllUsers(nil)),
+			len(app.DarkChainKeeper.GetAllLoans()))
+	}
+}
+
+// executeTx 执行一笔交易。
+func (app *NekoApp) executeTx(tx *Tx) {
+	switch tx.Type {
+	case "register":
+		if len(tx.Data) < 64 {
+			log.Printf("[chain] register tx too short: %d bytes", len(tx.Data))
+			return
+		}
+		msg := &brighttypes.MsgRegister{RecvPk: tx.Data[:32], SendPk: tx.Data[32:64]}
+		// 解析邀请凭证（如果有）
+		if len(tx.Data) > 64 {
+			// 格式: recv_pk(32) + send_pk(32) + invite_count(1) + N×cred(216)
+			count := int(tx.Data[64])
+			offset := 65
+			for i := 0; i < count && offset+216 <= len(tx.Data); i++ {
+				cred := make([]byte, 216)
+				copy(cred, tx.Data[offset:offset+216])
+				msg.GuarantorSigs = append(msg.GuarantorSigs, cred)
+				offset += 216
+			}
+		}
+		_, err := app.BrightChainKeeper.RegisterUser(nil, msg)
+		if err != nil {
+			log.Printf("[chain] register failed: %v", err)
+		}
+	case "guarantee":
+		// 简化：Data = inviter(32) + invitee(32)
+		if len(tx.Data) >= 64 {
+			if _, err := app.BrightChainKeeper.CreateBond(nil, &brighttypes.MsgGuarantee{
+				Inviter: string(tx.Data[:32]), Invitee: string(tx.Data[32:64]),
+			}); err != nil {
+				log.Printf("[chain] guarantee failed: %v", err)
+			}
+		}
+	case "repay":
+		// Data = payer(32) + amount(8)
+		if len(tx.Data) >= 40 {
+			amt := uint64(tx.Data[32])<<56 | uint64(tx.Data[33])<<48 | uint64(tx.Data[34])<<40 | uint64(tx.Data[35])<<32 |
+				uint64(tx.Data[36])<<24 | uint64(tx.Data[37])<<16 | uint64(tx.Data[38])<<8 | uint64(tx.Data[39])
+			if err := app.BrightChainKeeper.CollectFees(nil, amt); err != nil {
+				log.Printf("[chain] collect fees failed: %v", err)
+			}
+		}
+	case "loan":
+		msg := &darktypes.MsgRequestLoan{BorrowerAnon: tx.Data[:32], Amount: 100, TermDays: 30}
+		loan, err := app.DarkChainKeeper.RequestLoan(msg)
+		if err != nil {
+			log.Printf("[chain] loan request failed: %v", err)
+			return
+		}
+		if loan != nil {
+			if _, err := app.DarkChainKeeper.ApproveLoan(&darktypes.MsgApproveLoan{LoanID: loan.LoanID, LenderAnon: []byte("pool")}); err != nil {
+				log.Printf("[chain] loan approve failed: %v", err)
+			}
+		}
+	case "game_tx":
+		// 游戏交易: Data = game_id_len(1) + game_id(N) + server_addr(32) + fee(4) + custom_data
+		if len(tx.Data) >= 38 {
+			idLen := int(tx.Data[0])
+			if idLen < 1 || idLen > 32 || len(tx.Data) < 1+idLen+32+4 {
+				return
+			}
+			gameID := string(tx.Data[1 : 1+idLen])
+			offset := 1 + idLen
+			serverAddr := string(tx.Data[offset : offset+32])
+			offset += 32
+			fee := uint64(tx.Data[offset])<<24 | uint64(tx.Data[offset+1])<<16 |
+				uint64(tx.Data[offset+2])<<8 | uint64(tx.Data[offset+3])
+			app.RecordGameTx(gameID, serverAddr, fee)
+		}
+	case "register_game":
+		// 注册新游戏: game_id_len(1) + game_id(N) + author(32) + fee_rate(2) + author_share(1) + server_share(1) + name
+		if len(tx.Data) >= 38 {
+			idLen := int(tx.Data[0])
+			if idLen < 1 || idLen > 32 || len(tx.Data) < 1+idLen+32+4 { return }
+			gameID := string(tx.Data[1 : 1+idLen])
+			offset := 1 + idLen
+			author := string(tx.Data[offset : offset+32])
+			offset += 32
+			feeRate := uint64(tx.Data[offset])<<8 | uint64(tx.Data[offset+1])
+			authorShare := uint64(tx.Data[offset+2])
+			serverShare := uint64(tx.Data[offset+3])
+			offset += 4
+			name := ""
+			if len(tx.Data) > offset { name = string(tx.Data[offset:]) }
+			app.RegisterGame(gameID, author, name, feeRate, authorShare, serverShare)
+		}
+	case "bind_game":
+		// 节点绑定为游戏服务器: node_id(32) + game_id_len(1) + game_id(N)
+		if len(tx.Data) >= 34 {
+			nodeID := string(tx.Data[:32])
+			idLen := int(tx.Data[32])
+			if idLen < 1 || idLen > 32 || len(tx.Data) < 33+idLen { return }
+			gameID := string(tx.Data[33 : 33+idLen])
+			app.BindGameServer(nodeID, gameID)
+		}
+	default:
+		// 未知交易类型，跳过
+	}
+}
+
+// SubmitTx 提交一笔交易到链上。
+func (app *NekoApp) SubmitTx(txType string, data []byte) string {
+	tx := &Tx{
+		ID:        generateTxID(data),
+		Type:      txType,
+		Data:      data,
+		Status:    "pending",
+		CreatedAt: time.Now().Unix(),
+	}
+	app.mempool.Submit(tx)
+	app.RecordTx(tx)
+	return tx.ID
+}
+
+func generateTxID(data []byte) string {
+	h := sha256.Sum256(data)
+	return fmt.Sprintf("%x", h[:16])
+}
+
+// RunOnce 手动执行一个区块（用于测试或单步调试），包含交易处理。
+func (app *NekoApp) RunOnce() {
+	app.BeginBlocker(nil)
+	txs := app.mempool.Drain(100)
+	for _, tx := range txs {
+		app.executeTx(tx)
+	}
+	app.EndBlocker(nil)
+}

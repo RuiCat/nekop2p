@@ -1,0 +1,172 @@
+// nekop2p Protocol Buffers 定义
+// 生成: protoc --go_out=. nekop2p.proto
+
+syntax = "proto3";
+package nekop2p;
+
+// ===== 用户与身份 =====
+
+message UserBlock {
+  string address = 1;
+  uint64 account_number = 2;
+  uint64 sequence = 3;
+  bytes recv_pk = 4;   // Curve25519
+  bytes send_pk = 5;   // Ed25519
+  uint64 credit_score = 6;
+  uint64 trust_weight = 7;
+  uint64 total_repay = 8;
+  uint64 credit_limit = 9;
+  bool seed_phase = 10;
+  repeated bytes guarantors = 11;
+  NodeRole node_role = 12;
+  int64 node_term_start = 13;
+  int64 node_term_end = 14;
+  repeated FriendRecord friends = 15;
+  repeated BondRef guaranteed_of = 16;
+  repeated BondRef guaranteed_by = 17;
+}
+
+message FriendRecord {
+  bytes chain_id = 1;
+  bytes recv_pk = 2;
+  bytes send_pk = 3;
+  uint32 trust_dist = 4;
+  int64 added_at = 5;
+  bytes introduced_by = 6;
+}
+
+message BondRef {
+  string bond_id = 1;
+  bytes other_party = 2;
+}
+
+// ===== 担保债券 =====
+
+message GuaranteeBond {
+  string bond_id = 1;
+  bytes inviter = 2;
+  bytes invitee = 3;
+  repeated bytes locked_commitments = 4;
+  uint64 total_bond = 5;
+  uint64 coefficient = 6;
+  uint64 seed_limit = 7;
+  int64 locked_at = 8;
+  int64 unlock_at = 9;
+  BondStatus status = 10;
+}
+
+// ===== 暗链贷款 =====
+
+message LoanRecord {
+  string loan_id = 1;
+  bytes borrower_anon = 2;
+  bytes lender_anon = 3;
+  uint64 amount = 4;
+  int64 term_days = 5;
+  LoanStatus status = 6;
+  bytes zk_credit_proof = 7;
+  bytes inkwell_params = 8;
+  int64 created_at = 9;
+  int64 due_date = 10;
+  int64 settled_at = 11;
+  bytes delivery_proof = 12;
+  bytes settlement_cmd = 13;
+}
+
+// ===== 节点劳动力市场 =====
+
+message NodeStats {
+  string chain_id = 1;
+  uint64 relay_count = 2;
+  uint64 online_blocks = 3;
+  uint64 total_blocks = 4;
+  uint64 salary_earned = 5;
+  int64 registered_at = 6;
+  int64 term_expires = 7;
+  bool exam_passed = 8;
+}
+
+message ExamResult {
+  string candidate_id = 1;
+  ExamType exam_type = 2;
+  bool passed = 3;
+  uint64 score = 4;
+  int64 completed_at = 5;
+  bytes result_hash = 6;
+}
+
+// ===== 枚举 =====
+
+enum NodeRole {
+  NODE_NONE = 0;
+  NODE_PUBLIC = 1;
+  NODE_OFFICIAL_RELAY = 2;
+  NODE_OFFICIAL_RECORD = 3;
+}
+
+enum BondStatus {
+  BOND_ACTIVE = 0;
+  BOND_RELEASED = 1;
+  BOND_FORFEITED = 2;
+}
+
+enum LoanStatus {
+  LOAN_PENDING = 0;
+  LOAN_ACTIVE = 1;
+  LOAN_SETTLED = 2;
+  LOAN_DEFAULTED = 3;
+}
+
+enum ExamType {
+  EXAM_RELAY = 0;
+  EXAM_RECORD = 1;
+}
+
+// ===== 交易消息 =====
+
+message MsgRegister {
+  bytes recv_pk = 1;
+  bytes send_pk = 2;
+  bytes zk_proof = 3;
+  repeated bytes guarantor_sigs = 4;
+}
+
+message MsgGuarantee {
+  string inviter = 1;
+  string invitee = 2;
+  repeated bytes bond_commitments = 3;
+  uint64 coefficient = 4;
+}
+
+message MsgRepay {
+  string from = 1;
+  uint64 amount = 2;
+  bytes zk_repay_proof = 3;
+}
+
+message MsgRequestLoan {
+  bytes borrower_anon = 1;
+  uint64 amount = 2;
+  int64 term_days = 3;
+  bytes zk_credit_proof = 4;
+}
+
+message MsgRegisterNode {
+  string node_address = 1;
+  NodeRole role = 2;
+  bytes exam_result_hash = 3;
+}
+
+// ===== 链同步 =====
+
+message ChainSyncRequest {
+  int64 from_height = 1;
+  int64 to_height = 2;
+}
+
+message ChainSyncBlock {
+  int64 height = 1;
+  bytes block_hash = 2;
+  repeated bytes transactions = 3;
+  int64 timestamp = 4;
+}

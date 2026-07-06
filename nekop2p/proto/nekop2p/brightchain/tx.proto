@@ -1,0 +1,79 @@
+// proto/nekop2p/brightchain/tx.proto
+//
+// 明域模块的交易消息。
+syntax = "proto3";
+
+package nekop2p.brightchain;
+
+option go_package = "github.com/nekop2p/nekop2p/x/brightchain/types";
+
+// ===== MsgRegister =====
+// 注册新用户。需要 ≥3 个有效担保人的 ZK 证明。
+message MsgRegister {
+    bytes recv_pk = 1;                // Curve25519 公钥
+    bytes send_pk = 2;                // Ed25519 公钥
+    bytes zk_identity_proof = 3;      // Groth16 证明：≥3 个担保人
+    repeated bytes guarantor_sigs = 4; // 离线签名（用于 ZK 电路）
+}
+
+message MsgRegisterResponse {
+    string address = 1;   // 新 chain_id (bech32)
+    uint64 sequence = 2;  // 初始序列号
+}
+
+// ===== MsgUpdateFriends =====
+// 更新用户的好友列表。只有所有者可以调用。
+message MsgUpdateFriends {
+    string sender = 1;              // 必须与签名者匹配
+    repeated FriendRecord add = 2;  // 要添加的好友
+    repeated bytes remove = 3;      // 要删除的 chain_ids
+}
+
+message MsgUpdateFriendsResponse {}
+
+// ===== MsgGuarantee =====
+// 通过锁定信用票据作为抵押来担保另一个用户。
+message MsgGuarantee {
+    string inviter = 1;             // Alice 的 chain_id（签名者）
+    string invitee = 2;             // Bob 的 chain_id
+    repeated bytes bond_note_commitments = 3; // 要锁定的信用票据
+    uint64 coefficient = 4;         // ≤ 1.0
+    int64 lock_period_days = 5;     // 默认 90
+    bytes zk_legitimate = 6;        // ZK 证明：邀请人是有效的担保人
+}
+
+message MsgGuaranteeResponse {
+    string bond_id = 1;
+}
+
+// ===== MsgReleaseBond =====
+// 在被担保人还清所有种子贷款后释放担保债券。
+message MsgReleaseBond {
+    string bond_id = 1;
+    string inviter = 2;
+}
+
+message MsgReleaseBondResponse {}
+
+// ===== MsgRepay =====
+// 语义翻转："偿还贷款" = "向资金池放贷"。
+// 明域看到的是资金池存款，而不是贷款还款。
+message MsgRepay {
+    string from_address = 1;
+    uint64 amount = 2;
+    bytes zk_repay_proof = 3;       // ZK 证明：此支付清偿了一笔暗域贷款
+    bytes inkwell_ref = 4;          // 混沌结算引用
+}
+
+message MsgRepayResponse {}
+
+// ===== MsgRegisterNode =====
+// 注册为官方节点（中继或记录）。
+message MsgRegisterNode {
+    string node_address = 1;
+    NodeRole role = 2;
+    bytes zk_weight_proof = 3;      // ZK 证明：信任权重 ≥ 阈值
+    bytes exam_result_hash = 4;     // 能力考试结果哈希
+}
+
+message MsgRegisterNodeResponse {}

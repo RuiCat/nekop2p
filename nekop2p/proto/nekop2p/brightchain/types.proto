@@ -1,0 +1,102 @@
+// proto/nekop2p/brightchain/types.proto
+//
+// 明域模块：用户块、担保、资金池管理。
+// 这是"阳光市场"域 — 所有数据公开可见。
+// chain_id 是假名的（类似比特币地址）。
+syntax = "proto3";
+
+package nekop2p.brightchain;
+
+option go_package = "github.com/nekop2p/nekop2p/x/brightchain/types";
+
+// ===== 用户块 =====
+// 每个用户在链上拥有一个用户块。它存储密钥、好友、信用和
+// 担保关系。只有所有者（send_sk 持有者）可以更新它。
+// 该块是用户的主权数据 — 导入 keys.json 即可恢复一切。
+
+message UserBlock {
+    string address = 1;           // bech32 编码的 chain_id
+    uint64 account_number = 2;
+    uint64 sequence = 3;          // 交易 nonce（防重放）
+
+    // 身份密钥（公开 — 存储在链上）
+    bytes recv_pk = 4;            // Curve25519 (32B) — 加密发送给此用户的消息
+    bytes send_pk = 5;            // Ed25519 (32B) — 验证来自此用户的签名
+
+    // 信用系统
+    uint64 credit_score = 6;      // 0-10000
+    uint64 trust_weight = 7;      // Σ(担保人信任 × 衰减)
+    uint64 total_repay_amount = 8; // 终身还款历史
+    uint64 credit_limit = 9;      // = total_repay_amount × 系数（≤1.0）
+
+    // 种子阶段
+    bool seed_phase = 10;         // true 直到第一笔种子贷款还清
+    repeated bytes guarantors = 11;  // 我的担保人的 chain_ids
+
+    // 节点角色
+    NodeRole node_role = 12;      // NONE | PUBLIC | OFFICIAL_RELAY | OFFICIAL_RECORD
+    int64 node_term_start = 13;   // unix 时间戳
+    int64 node_term_end = 14;
+
+    // 社交图谱（存储在链上，用户主权）
+    repeated FriendRecord friends = 15;
+    repeated BondRef guaranteed_of = 16;   // 我担保的人
+    repeated BondRef guaranteed_by = 17;   // 担保我的人
+}
+
+enum NodeRole {
+    NONE = 0;
+    PUBLIC = 1;
+    OFFICIAL_RELAY = 2;
+    OFFICIAL_RECORD = 3;
+}
+
+message FriendRecord {
+    bytes chain_id = 1;
+    bytes recv_pk = 2;
+    bytes send_pk = 3;
+    uint32 trust_dist = 4;       // 1 = 直接，2 = 介绍
+    int64 added_at = 5;
+    bytes introduced_by = 6;     // 介绍人的 chain_id（如果 trust_dist=2）
+}
+
+message BondRef {
+    string bond_id = 1;
+    bytes other_party = 2;
+}
+
+// ===== 担保债券 =====
+// 当 Alice 担保 Bob 时，Alice 锁定信用票据作为抵押。
+// 该债券公开可见（chain_id 级别，非真实身份）。
+
+message GuaranteeBond {
+    string bond_id = 1;
+    bytes inviter = 2;            // Alice 的 chain_id
+    bytes invitee = 3;            // Bob 的 chain_id
+    repeated bytes locked_note_commitments = 4;  // 作为抵押锁定的信用票据
+    uint64 total_bond = 5;        // 总锁定价值
+    uint64 coefficient = 6;       // ≤ 1.0，种子额度 = total_bond × 系数
+    uint64 seed_limit = 7;        // Bob 从此债券获得的信用额度
+    int64 locked_at = 8;
+    int64 unlock_at = 9;          // 自动释放日期（或还款后提前释放）
+    BondStatus status = 10;
+}
+
+enum BondStatus {
+    ACTIVE = 0;
+    RELEASED = 1;
+    FORFEITED = 2;
+}
+
+// ===== 资金池 =====
+// 共享基金。收取交易手续费，支付节点工资。
+// 不发放贷款 — 种子贷款来自担保债券。
+
+message Pool {
+    uint64 total_balance = 1;
+    uint64 salary_relay = 2;      // 中继节点工资预算
+    uint64 salary_record = 3;     // 记录节点工资预算
+    uint64 seed_loan_reserve = 4; // 应急种子贷款储备（遗留）
+    uint64 bad_debt_reserve = 5;  // 递归责任兜底
+    uint64 community = 6;         // 基础设施维护
+}

@@ -1,0 +1,88 @@
+# ============================================================
+# Nekop2p - 双层城邦 · 双链清算网络
+# Git Ignore 规则
+# ============================================================
+
+# ---- Go ----
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+neko-node
+observer
+neko-demo
+
+# 依赖管理
+vendor/
+
+# 测试覆盖率
+*.coverprofile
+coverage.out
+coverage.html
+
+# 竞态检测日志
+*.race
+
+# 临时文件
+*.tmp
+*.swp
+*.swo
+*~
+
+# ---- IDE ----
+# VS Code
+.vscode/
+*.code-workspace
+
+# GoLand / IntelliJ IDEA
+.idea/
+*.iml
+
+# Vim / Neovim
+[._]*.un~
+
+# Emacs
+\#*\#
+.\#*
+
+# ---- 操作系统 ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---- 日志与数据 ----
+*.log
+*.log.*
+data/
+
+# ---- 环境密钥（非常重要！） ----
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+secrets/
+.env
+.env.*
+
+# ---- 临时目录 ----
+tmp/
+temp/
+.build/
+
+# ---- Opencode 工作区 ----
+.opencode/
+
+# ---- IDE 工作区 ----
+*.swp
+*.swo
+session.vim

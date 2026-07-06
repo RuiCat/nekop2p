@@ -1,0 +1,87 @@
+// proto/nekop2p/darkchain/types.proto
+//
+// 暗域模块：匿名借贷、信用票据、混沌结算。
+// 所有身份均为 zk-匿名。外部观察者无法将
+// 暗域活动与明域的 chain_ids 关联起来。
+syntax = "proto3";
+
+package nekop2p.darkchain;
+
+option go_package = "github.com/nekop2p/nekop2p/x/darkchain/types";
+
+// AnonIdentity 是暗域交易的一次性匿名身份。
+// 通过 PRF(master_secret, counter) 生成 — 不可关联到 chain_id。
+message AnonIdentity {
+    bytes anon_id = 1;
+    bytes zk_credit_proof = 2;   // 明域信用评分的 ZK 证明
+    int64 created_at = 3;
+    int64 expires_at = 4;
+}
+
+// LoanRecord 是一笔暗域贷款（IOU）。
+message LoanRecord {
+    string loan_id = 1;
+    bytes borrower_anon = 2;
+    bytes lender_anon = 3;       // 或资金池标识符
+    uint64 amount = 4;
+    int64 term_days = 5;
+    LoanStatus status = 6;
+    bytes zk_credit_proof = 7;
+    bytes inkwell_params = 8;    // 混沌结算参数
+    int64 created_at = 9;
+    int64 due_date = 10;
+    int64 settled_at = 11;
+    repeated RepayFragment fragments = 12;
+}
+
+message RepayFragment {
+    uint64 amount = 1;
+    bytes payer_anon = 2;
+    int64 paid_at = 3;
+    bytes zk_repay_proof = 4;
+}
+
+enum LoanStatus {
+    PENDING = 0;
+    ACTIVE = 1;
+    SETTLED = 2;
+    DEFAULTED = 3;
+}
+
+// CreditNote 是一个可花费的信用单元（UTXO 模型）。
+message CreditNote {
+    uint64 value = 1;
+    bytes owner_key = 2;
+    bytes serial = 3;
+    bytes commitment = 4;  // SHA256(value || owner_key || serial)
+}
+
+// 暗域全局状态。
+message DarkState {
+    repeated bytes credit_tree = 1;      // 未花费票据承诺的 Merkle 树
+    repeated bytes nullifier_set = 2;    // 已花费票据的 nullifier（防双花）
+    repeated bytes identity_markers = 3; // 每周期已使用的标记（防自我交易）
+    bytes cycle_marker = 4;              // 当前区块周期标记
+}
+
+// ===== 消息 =====
+
+message MsgRequestLoan {
+    bytes borrower_anon = 1;
+    uint64 amount = 2;
+    int64 term_days = 3;
+    bytes zk_credit_proof = 4;
+    bytes inkwell_seed = 5;
+}
+
+message MsgApproveLoan {
+    string loan_id = 1;
+    bytes lender_anon = 2;
+    bytes inkwell_params = 3;
+}
+
+message MsgSettleLoan {
+    string loan_id = 1;
+    bytes delivery_proof = 2;
+    bytes settlement_cmd = 3;
+}
