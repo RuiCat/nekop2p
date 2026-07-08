@@ -231,7 +231,8 @@ func UnwrapOne(recvPriv *[32]byte, encrypted []byte) (*UnwrapResult, error) {
 //
 // 格式: circuit_id(16) || layer_0_len(2) || layer_0 || ... || padding
 // 总大小始终填充到 FixedPacketSize 或其整数倍，防止从包大小推断路径长度。
-// path_len 不再明文暴露——解析方通过遍历所有加密层推断跳数。
+// path_len 不再明文暴露——填充字节伪装为随机数据，观察者无法区分真实层长度
+// 前缀与填充区域的随机字节。
 func (p *Packet) Serialize() []byte {
 	// 计算实际数据大小
 	size := CircuitIDSize // circuit_id
@@ -247,7 +248,7 @@ func (p *Packet) Serialize() []byte {
 
 	buf := make([]byte, paddedSize)
 	copy(buf[0:CircuitIDSize], p.CircuitID[:])
-	
+
 	offset := CircuitIDSize
 	for _, l := range p.Layers {
 		binary.BigEndian.PutUint16(buf[offset:offset+2], uint16(len(l)))
@@ -256,13 +257,24 @@ func (p *Packet) Serialize() []byte {
 		offset += len(l)
 	}
 
-	// 剩余部分自然为零填充 (nil slice 初始化)
+	// 填充剩余空间为抗分析随机数据。
+	// 首个填充字节设置为使后续 2 字节大端序 uint16 始终 ≥ 512，
+	// 确保 ParseOnion 的边界检查 (offset+layerLen > len(data)) 在首个填充"槽位"触发中断。
+	// 剩余空间 ≤ 511 字节 (FixedPacketSize 对齐)，因此 uint16 ≥ 512 始终超过剩余空间。
+	remaining := paddedSize - offset
+	if remaining >= 2 {
+		buf[offset] = 0x02 // 使 uint16 最低值为 0x0200 = 512
+		rand.Read(buf[offset+1 : paddedSize])
+	} else if remaining == 1 {
+		rand.Read(buf[offset:paddedSize])
+	}
+
 	return buf
 }
 
 // ParseOnion 从有线格式反序列化洋葱数据包。
-// path_len 不再明文暴露——通过解析所有连续加密层推断。
-// 零长度层标记结束，剩余字节为填充。
+// 从长度前缀链表中读取加密层，直至遇到超出边界的长度或零长度标记。
+// 填充区域使用随机非零字节（首个字节使 uint16≥512），确保边界检查可靠触发。
 func ParseOnion(data []byte) (*Packet, error) {
 	if len(data) < CircuitIDSize+2 {
 		return nil, fmt.Errorf("onion: packet too short: %d bytes", len(data))

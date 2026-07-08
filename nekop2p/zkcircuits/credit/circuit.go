@@ -28,9 +28,8 @@ type NoteWitness struct {
 	Commitment  frontend.Variable
 	MerkleProof merkle.MerkleProof
 	Active      frontend.Variable
-	// SerialInverse[j] 提供与 OutputNotes[j].Serial 差的逆元
-	// 用于约束活跃输出票据必须具有不同的序列号 (防双花)
-	SerialInverse [MaxOutputNotes]frontend.Variable
+	// SerialInverse[j] 用于约束活跃票据必须具有不同的序列号 (防双花)
+	SerialInverse [MaxInputNotes]frontend.Variable
 }
 
 func (c *Circuit) Define(api frontend.API) error {
@@ -39,6 +38,11 @@ func (c *Circuit) Define(api frontend.API) error {
 	inputSum := frontend.Variable(0)
 	for i := 0; i < MaxInputNotes; i++ {
 		n := c.InputNotes[i]
+		// Constrain Active to be 0 or 1: Active * (Active - 1) == 0
+		api.AssertIsEqual(
+			api.Mul(n.Active, api.Sub(n.Active, 1)),
+			frontend.Variable(0),
+		)
 		n.MerkleProof.VerifyProof(api, &h, n.Commitment)
 
 		// 验证 commitment = MiMC(value || owner_key || serial)
@@ -51,9 +55,38 @@ func (c *Circuit) Define(api frontend.API) error {
 		inputSum = api.Add(inputSum, api.Mul(n.Value, n.Active))
 	}
 
+	// 输入票据序列号唯一性约束
+	one := frontend.Variable(1)
+	zero := frontend.Variable(0)
+	for i := 0; i < MaxInputNotes; i++ {
+		for j := i + 1; j < MaxInputNotes; j++ {
+			bothActive := api.Mul(c.InputNotes[i].Active, c.InputNotes[j].Active)
+			diff := api.Sub(c.InputNotes[i].Serial, c.InputNotes[j].Serial)
+			api.AssertIsEqual(
+				api.Mul(bothActive, api.Sub(api.Mul(diff, c.InputNotes[i].SerialInverse[j]), one)),
+				zero,
+			)
+		}
+	}
+
+	// 输入票据承诺唯一性约束
+	for i := 0; i < MaxInputNotes; i++ {
+		for j := i + 1; j < MaxInputNotes; j++ {
+			bothActive := api.Mul(c.InputNotes[i].Active, c.InputNotes[j].Active)
+			diff := api.Sub(c.InputNotes[i].Commitment, c.InputNotes[j].Commitment)
+			diffIsZero := api.IsZero(diff)
+			api.AssertIsEqual(api.Mul(bothActive, diffIsZero), zero)
+		}
+	}
+
 	outputSum := frontend.Variable(0)
 	for i := 0; i < MaxOutputNotes; i++ {
 		o := c.OutputNotes[i]
+		// Constrain Active to be 0 or 1: Active * (Active - 1) == 0
+		api.AssertIsEqual(
+			api.Mul(o.Active, api.Sub(o.Active, 1)),
+			frontend.Variable(0),
+		)
 		outputSum = api.Add(outputSum, api.Mul(o.Value, o.Active))
 		// 验证输出承诺
 		h3, _ := mimc.NewMiMC(api)
@@ -65,8 +98,6 @@ func (c *Circuit) Define(api frontend.API) error {
 
 	// 输出票据序列号唯一性约束: 活跃票据的 Serial 必须互不相同
 	// 使用逆元技巧: 若 bothActive=1 则 diff*diff_inv=1 → diff≠0
-	one := frontend.Variable(1)
-	zero := frontend.Variable(0)
 	for i := 0; i < MaxOutputNotes; i++ {
 		for j := i + 1; j < MaxOutputNotes; j++ {
 			bothActive := api.Mul(c.OutputNotes[i].Active, c.OutputNotes[j].Active)

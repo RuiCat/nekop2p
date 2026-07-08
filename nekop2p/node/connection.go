@@ -11,6 +11,7 @@ import (
 	"github.com/nekop2p/nekop2p/noise"
 	"github.com/nekop2p/nekop2p/peer"
 	"github.com/nekop2p/nekop2p/ratchet"
+	"lukechampine.com/blake3"
 )
 
 // DialFriend 使用 Noise_IK 连接到已知好友。
@@ -173,22 +174,33 @@ func (n *Node) handleIncoming(conn net.Conn) {
 }
 
 func (n *Node) tryIKResponder(conn net.Conn, msg1 []byte) ([]byte, *noise.HandshakeResult, error) {
-	hs := noise.NewResponderIK(&n.cfg.RecvKey, [32]byte{}, noise.RoleFriend)
-	payload, err := hs.ReadMessage(msg1)
-	if err != nil {
-		return nil, nil, err
+	friends := n.topology.GetCoreFriends()
+	if len(friends) == 0 {
+		return nil, nil, fmt.Errorf("no friends configured, cannot accept IK")
 	}
-	msg2, err := hs.WriteMessage(nil)
-	if err != nil {
-		return nil, nil, err
+
+	for _, friend := range friends {
+		hs, err := noise.NewResponderIK(&n.cfg.RecvKey, friend.RecvPK, noise.RoleFriend)
+		if err != nil {
+			continue
+		}
+		payload, err := hs.ReadMessage(msg1)
+		if err != nil {
+			continue
+		}
+		msg2, err := hs.WriteMessage(nil)
+		if err != nil {
+			continue
+		}
+		if _, err := conn.Write(msg2); err != nil {
+			return nil, nil, err
+		}
+		result := hs.Complete()
+		chainID := hashToChainID(result.RemoteStatic)
+		n.addPeerSession(conn, chainID, result, false)
+		return payload, result, nil
 	}
-	if _, err := conn.Write(msg2); err != nil {
-		return nil, nil, err
-	}
-	result := hs.Complete()
-	chainID := hashToChainID(result.RemoteStatic)
-	n.addPeerSession(conn, chainID, result, false)
-	return payload, result, nil
+	return nil, nil, fmt.Errorf("no friend identity matched IK initiator")
 }
 
 func (n *Node) tryNKResponder(conn net.Conn, msg1 []byte) ([]byte, error) {
@@ -212,7 +224,9 @@ func (n *Node) tryNKResponder(conn net.Conn, msg1 []byte) ([]byte, error) {
 func (n *Node) addPeerSession(conn net.Conn, chainID peer.ChainID, result *noise.HandshakeResult, isPadding bool) *peer.Info {
 	sendKey := result.SendCipher.Key
 	recvKey := result.RecvCipher.Key
-	framer := frame.NewSessionKeys(sendKey[:], recvKey[:])
+	transportSendKey := blake3.Sum256(append(sendKey[:], []byte("-nekop2p-transport-send")...))
+	transportRecvKey := blake3.Sum256(append(recvKey[:], []byte("-nekop2p-transport-recv")...))
+	framer := frame.NewSessionKeys(transportSendKey[:], transportRecvKey[:])
 	return n.peers.Add(chainID, conn, framer, isPadding)
 }
 

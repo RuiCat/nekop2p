@@ -417,13 +417,13 @@ func kdfRK(rootKey, dhOutput [32]byte) ([32]byte, [32]byte) {
 }
 
 func kdfCK(chainKey [32]byte) ([32]byte, [32]byte) {
-	h := hmac.New(sha256.New, chainKey[:])
-	h.Write([]byte{0x01})
-	newChainKey := h.Sum(nil)
+	h1 := hmac.New(sha256.New, chainKey[:])
+	h1.Write([]byte{0x01})
+	newChainKey := h1.Sum(nil)
 
-	h.Reset()
-	h.Write([]byte{0x02})
-	messageKey := h.Sum(nil)
+	h2 := hmac.New(sha256.New, chainKey[:])
+	h2.Write([]byte{0x02})
+	messageKey := h2.Sum(nil)
 
 	var nck, mk [32]byte
 	copy(nck[:], newChainKey)

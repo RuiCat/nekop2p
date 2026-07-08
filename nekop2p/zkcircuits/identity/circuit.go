@@ -43,6 +43,11 @@ func (c *Circuit) Define(api frontend.API) error {
 	validCount := frontend.Variable(0)
 	for i := 0; i < MaxGuarantors; i++ {
 		g := c.Guarantors[i]
+		// Constrain Active to be 0 or 1: Active * (Active - 1) == 0
+		api.AssertIsEqual(
+			api.Mul(g.Active, api.Sub(g.Active, 1)),
+			frontend.Variable(0),
+		)
 		// 为每个担保人创建独立的 MiMC 哈希器 (防止状态污染)
 		h, _ := mimc.NewMiMC(api)
 

@@ -65,11 +65,11 @@ func TestOnionRoutingLive(t *testing.T) {
 	errCh := make(chan error, 4)
 
 	// 第 1 跳: 接受来自发送方的连接，解包，转发到第 2 跳
-	go relayHop(t, "hop1", nodes[0], nodes[1], hops[1], msgCh, errCh, false)
+	go relayHop(t, "hop1", nodes[0], nodes[1], hops[1], msgCh, errCh, false, senderKeys.RecvKey.Public)
 	// 第 2 跳: 接受来自第 1 跳的连接，解包，转发到第 3 跳
-	go relayHop(t, "hop2", nodes[1], nodes[2], hops[2], msgCh, errCh, true)
+	go relayHop(t, "hop2", nodes[1], nodes[2], hops[2], msgCh, errCh, true, nodes[0].keys.RecvKey.Public)
 	// 第 3 跳: 接受来自第 2 跳的连接，最终解包，送达目标
-	go exitHop(t, nodes[2], nodes[3], target, message, msgCh, errCh)
+	go exitHop(t, nodes[2], nodes[3], target, message, msgCh, errCh, nodes[1].keys.RecvKey.Public)
 
 	time.Sleep(100 * time.Millisecond) // 等待监听器就绪
 
@@ -97,7 +97,7 @@ func TestOnionRoutingLive(t *testing.T) {
 }
 
 func relayHop(t *testing.T, name string, self, next *nodeCfg, nextHop onion.Hop,
-	msgCh chan []byte, errCh chan error, isMiddle bool) {
+	msgCh chan []byte, errCh chan error, isMiddle bool, expectedInitPK [32]byte) {
 	t.Helper()
 	conn, err := self.listener.Accept()
 	if err != nil {
@@ -106,7 +106,7 @@ func relayHop(t *testing.T, name string, self, next *nodeCfg, nextHop onion.Hop,
 	}
 	defer conn.Close()
 
-	hs := noise.NewResponderIK(&self.keys.RecvKey, [32]byte{}, noise.RoleFriend)
+	hs, _ := noise.NewResponderIK(&self.keys.RecvKey, expectedInitPK, noise.RoleFriend)
 	buf := make([]byte, 8192)
 	nr, _ := conn.Read(buf)
 	hs.ReadMessage(buf[:nr])
@@ -143,7 +143,7 @@ func relayHop(t *testing.T, name string, self, next *nodeCfg, nextHop onion.Hop,
 }
 
 func exitHop(t *testing.T, self, target *nodeCfg, expectedTarget onion.Target,
-	expectedMsg []byte, msgCh chan []byte, errCh chan error) {
+	expectedMsg []byte, msgCh chan []byte, errCh chan error, expectedInitPK [32]byte) {
 	t.Helper()
 	conn, err := self.listener.Accept()
 	if err != nil {
@@ -152,7 +152,7 @@ func exitHop(t *testing.T, self, target *nodeCfg, expectedTarget onion.Target,
 	}
 	defer conn.Close()
 
-	hs := noise.NewResponderIK(&self.keys.RecvKey, [32]byte{}, noise.RoleFriend)
+	hs, _ := noise.NewResponderIK(&self.keys.RecvKey, expectedInitPK, noise.RoleFriend)
 	buf := make([]byte, 8192)
 	nr, _ := conn.Read(buf)
 	hs.ReadMessage(buf[:nr])

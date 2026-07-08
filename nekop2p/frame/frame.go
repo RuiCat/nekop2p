@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"golang.org/x/crypto/chacha20poly1305"
+	"lukechampine.com/blake3"
 )
 
 // SessionKeys 保存连接的发送和接收加密密钥。
@@ -35,6 +36,22 @@ func NewSessionKeys(sendKey, recvKey []byte) *SessionKeys {
 	return sk
 }
 
+// makeNonce 从会话密钥派生随机化 nonce 前缀，防止前 16 字节始终为零。
+// 双方基于共享密钥一致地推导相同前缀，因此无需在线上传输完整 nonce。
+func (sk *SessionKeys) makeNonce(nonceVal uint64, isSend bool) [chacha20poly1305.NonceSizeX]byte {
+	var nonce [chacha20poly1305.NonceSizeX]byte
+	var keyForPrefix [32]byte
+	if isSend {
+		keyForPrefix = sk.SendKey
+	} else {
+		keyForPrefix = sk.RecvKey
+	}
+	prefix := blake3.Sum256(append(keyForPrefix[:], []byte("-nonce-prefix")...))
+	copy(nonce[:16], prefix[:16])
+	binary.LittleEndian.PutUint64(nonce[16:], nonceVal)
+	return nonce
+}
+
 // WriteEncryptedFrame 加密一帧完整数据并写入 writer。
 // 线程安全：多个 goroutine 可并发调用。
 func (sk *SessionKeys) WriteEncryptedFrame(w io.Writer, f *Frame) error {
@@ -58,8 +75,7 @@ func (sk *SessionKeys) WriteEncryptedFrame(w io.Writer, f *Frame) error {
 	sk.SendNonce++
 	sk.mu.Unlock()
 
-	var nonce [chacha20poly1305.NonceSizeX]byte
-	binary.LittleEndian.PutUint64(nonce[16:], nonceVal)
+	nonce := sk.makeNonce(nonceVal, true)
 
 	// 将帧长度绑定到 AEAD 认证中
 	lenBytes := make([]byte, 2)
@@ -112,8 +128,8 @@ func (sk *SessionKeys) ReadEncryptedFrame(r io.Reader) (*Frame, error) {
 		return nil, fmt.Errorf("chacha20poly1305: %w", err)
 	}
 
-	var nonce [chacha20poly1305.NonceSizeX]byte
-	copy(nonce[16:], remaining[:NonceLen])
+	recvNonce := binary.LittleEndian.Uint64(remaining[:NonceLen])
+	nonce := sk.makeNonce(recvNonce, false)
 	encrypted := remaining[NonceLen:]
 
 	// 验证帧长度已被认证
@@ -131,7 +147,6 @@ func (sk *SessionKeys) ReadEncryptedFrame(r io.Reader) (*Frame, error) {
 
 	// 4. 防重放：检查 nonce 是否严格大于上次见到的值
 	// 已修复：原实现中 nonce=0 的帧在首帧后仍可被重放（&& sk.RecvNonce > 0 条件绕过）
-	recvNonce := binary.LittleEndian.Uint64(nonce[16:])
 	sk.mu.Lock()
 	if sk.hasRecv && recvNonce <= sk.RecvNonce {
 		sk.mu.Unlock()

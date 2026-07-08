@@ -163,7 +163,7 @@ func TestNoiseFrameIntegration(t *testing.T) {
 
 	// IK 握手
 	bobHS := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
-	aliceHS := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend)
+	aliceHS, _ := noise.NewResponderIK(aliceKey, bobKey.Public, noise.RoleFriend)
 
 	msg1, _ := bobHS.WriteMessage(nil)
 	aliceHS.ReadMessage(msg1)

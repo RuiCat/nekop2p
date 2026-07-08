@@ -49,9 +49,11 @@ func KEMEncrypt(recipientPub *[32]byte, plaintext []byte) ([]byte, error) {
 
 	// 2. ECDH: shared = DH(ephemeral_sk, recipient_pk)
 	shared, err := curve25519.X25519(ephPriv, recipientPub[:])
+	Memzero(ephPriv) // 使用后立即清零临时私钥
 	if err != nil {
 		return nil, err
 	}
+	defer Memzero(shared) // 函数返回前清零共享密钥
 
 	// 3. HKDF 派生 AES key（域分离 + 接收方公钥绑定）
 	aesKey := deriveKEMKey(shared, recipientPub[:])
@@ -116,6 +118,7 @@ func KEMDecrypt(recipientPriv *[32]byte, encrypted []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer Memzero(shared) // 函数返回前清零共享密钥
 
 	// 4. 相同的 HKDF 派生
 	aesKey := deriveKEMKey(shared, ourPub)

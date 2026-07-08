@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"runtime"
 
 	"github.com/cloudflare/circl/kem"
 	"github.com/cloudflare/circl/kem/kyber/kyber1024"
@@ -28,10 +29,19 @@ type PQKeyPair struct {
 
 // Zero 清零后量子密钥材料。
 func (pq *PQKeyPair) Zero() {
-	// circl 的密钥对象由 GC 管理，无显式清零方法。
-	// 将引用置 nil 让 GC 回收。
+	if pq.Private != nil {
+		if raw, err := pq.Private.MarshalBinary(); err == nil {
+			Memzero(raw)
+		}
+	}
+	if pq.Public != nil {
+		if raw, err := pq.Public.MarshalBinary(); err == nil {
+			Memzero(raw)
+		}
+	}
 	pq.Public = nil
 	pq.Private = nil
+	runtime.GC()
 }
 
 // GeneratePQKeys 生成全新的 Kyber-1024 后量子密钥对。

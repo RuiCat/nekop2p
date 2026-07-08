@@ -153,20 +153,22 @@ func NewInitiatorIK(initiatorStatic *crypto.KeyPair, responderStatic *[32]byte, 
 // NewResponderIK 以应答方身份启动一个 Noise_IK 握手。
 // expectedInitiatorStatic 是预期的发起方静态公钥，握手完成后验证。
 // 必须提供非零值以确保双向认证——这是 IK 模式的安全基础。
-func NewResponderIK(responderStatic *crypto.KeyPair, expectedInitiatorStatic [32]byte, roleStr string) *HandshakeState {
-	prologue := buildPrologue(roleStr)
+// 如果 expectedInitiatorStatic 为零值，返回错误。
+func NewResponderIK(responderStatic *crypto.KeyPair, expectedInitiatorStatic [32]byte, roleStr string) (*HandshakeState, error) {
 	var zeroPK [32]byte
+	if expectedInitiatorStatic == zeroPK {
+		return nil, fmt.Errorf("noise IK: expectedInitiatorStatic must be non-zero for IK mode")
+	}
+	prologue := buildPrologue(roleStr)
 	hs := &HandshakeState{
 		role:     RoleResponder,
 		pattern:  "IK",
 		prologue: prologue,
 		s:        responderStatic,
-	}
-	if expectedInitiatorStatic != zeroPK {
-		hs.rs = expectedInitiatorStatic
+		rs:       expectedInitiatorStatic,
 	}
 	hs.initialize()
-	return hs
+	return hs, nil
 }
 
 // NewInitiatorNK 以发起方身份启动一个 Noise_NK 握手。
@@ -387,9 +389,8 @@ func (hs *HandshakeState) readIKMessage1(message []byte) ([]byte, error) {
 	}
 	copy(hs.rs[:], decryptedS[:32])
 
-	// 身份验证：如果调用方预置了预期发起方公钥，验证解密结果
-	var zeroPK [32]byte
-	if expectedRS != zeroPK && expectedRS != hs.rs {
+	// 身份验证：必须验证解密出的发起方静态公钥与预期一致
+	if expectedRS != hs.rs {
 		return nil, fmt.Errorf("noise IK: initiator identity mismatch — expected %x, got %x", expectedRS[:8], hs.rs[:8])
 	}
 

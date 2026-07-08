@@ -88,6 +88,7 @@ func GenerateDualKeys() (*DualKeys, error) {
 	copy(keys.RecvKey.Public[:], recvPub)
 	copy(keys.SendKey.Public[:], sendPub)
 	copy(keys.SendKey.Private[:], sendPriv)
+	Memzero(recvPriv) // 复制完成后清零堆上临时密钥材料
 
 	return keys, nil
 }

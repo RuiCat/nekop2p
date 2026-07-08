@@ -49,7 +49,7 @@ func TestFullDiscoveryFlow(t *testing.T) {
 		defer conn.Close()
 
 		// Noise_IK 响应方（Bob 是好友）
-		hs := noise.NewResponderIK(&aliceKeys.RecvKey, [32]byte{}, noise.RoleFriend)
+		hs, _ := noise.NewResponderIK(&aliceKeys.RecvKey, bobKeys.RecvKey.Public, noise.RoleFriend)
 		msgBuf := make([]byte, 4096)
 		nr, _ := conn.Read(msgBuf)
 		if _, err := hs.ReadMessage(msgBuf[:nr]); err != nil {
@@ -220,10 +220,10 @@ func TestThreeNodeRelay(t *testing.T) {
 	beaconReceived := make(chan *beacon.BeaconPacket, 1)
 
 	// Alice: 接受来自中继的连接
-	go func() {
+		go func() {
 		conn, _ := aliceLn.Accept()
 		defer conn.Close()
-		hs := noise.NewResponderIK(&aliceKeys.RecvKey, [32]byte{}, noise.RoleFriend)
+		hs, _ := noise.NewResponderIK(&aliceKeys.RecvKey, relayKeys.RecvKey.Public, noise.RoleFriend)
 		buf := make([]byte, 4096)
 		nr, _ := conn.Read(buf)
 		hs.ReadMessage(buf[:nr])
@@ -257,7 +257,7 @@ func TestThreeNodeRelay(t *testing.T) {
 	go func() {
 		conn, _ := relayLn.Accept()
 		defer conn.Close()
-		hs := noise.NewResponderIK(&relayKeys.RecvKey, [32]byte{}, noise.RoleFriend)
+		hs, _ := noise.NewResponderIK(&relayKeys.RecvKey, bobKeys.RecvKey.Public, noise.RoleFriend)
 		buf := make([]byte, 4096)
 		nr, _ := conn.Read(buf)
 		hs.ReadMessage(buf[:nr])

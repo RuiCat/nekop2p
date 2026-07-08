@@ -58,14 +58,14 @@ func NewVirtualNode(t *testing.T, name string) *VirtualNode {
 	return vn
 }
 
-// AcceptOne 接受一个传入的 Noise IK 连接。
-func (vn *VirtualNode) AcceptOne(t *testing.T) *VirtualPeer {
+// AcceptOne 接受一个传入的 Noise IK 连接，并验证发起方身份。
+func (vn *VirtualNode) AcceptOne(t *testing.T, expectedInitPK [32]byte) *VirtualPeer {
 	t.Helper()
 	conn, err := vn.Listener.Accept()
 	if err != nil {
 		t.Fatalf("[%s] accept: %v", vn.Name, err)
 	}
-	hs := noise.NewResponderIK(&vn.Keys.RecvKey, [32]byte{}, noise.RoleFriend)
+	hs, _ := noise.NewResponderIK(&vn.Keys.RecvKey, expectedInitPK, noise.RoleFriend)
 	buf := make([]byte, 8192)
 	nr, _ := conn.Read(buf)
 	hs.ReadMessage(buf[:nr])
@@ -139,7 +139,7 @@ func TestTwoNodeDiscoveryAndMessaging(t *testing.T) {
 	var alicePeer *VirtualPeer
 	aliceDone := make(chan struct{})
 	go func() {
-		alicePeer = alice.AcceptOne(t)
+		alicePeer = alice.AcceptOne(t, bob.Keys.RecvKey.Public)
 		close(aliceDone)
 	}()
 
@@ -271,28 +271,28 @@ func TestThreeNodeOnionRouting(t *testing.T) {
 	// === 连接链路 ===
 	// Alice → Bob
 	bobPeerCh := make(chan *VirtualPeer, 1)
-	go func() { bobPeerCh <- bob.AcceptOne(t) }()
+	go func() { bobPeerCh <- bob.AcceptOne(t, alice.Keys.RecvKey.Public) }()
 	time.Sleep(50 * time.Millisecond)
 	aliceToBob := alice.Dial(t, bob)
 	bobPeer := <-bobPeerCh
 
 	// Bob → Charlie
 	charliePeerCh := make(chan *VirtualPeer, 1)
-	go func() { charliePeerCh <- charlie.AcceptOne(t) }()
+	go func() { charliePeerCh <- charlie.AcceptOne(t, bob.Keys.RecvKey.Public) }()
 	time.Sleep(50 * time.Millisecond)
 	bobToCharlie := bob.Dial(t, charlie)
 	charliePeer := <-charliePeerCh
 
 	// Charlie → Dave
 	davePeerCh := make(chan *VirtualPeer, 1)
-	go func() { davePeerCh <- dave.AcceptOne(t) }()
+	go func() { davePeerCh <- dave.AcceptOne(t, charlie.Keys.RecvKey.Public) }()
 	time.Sleep(50 * time.Millisecond)
 	charlieToDave := charlie.Dial(t, dave)
 	davePeer := <-davePeerCh
 
 	// Dave → Eve 连接（出口跳到目标 — 已建立但测试中未使用）
 	evePeerCh := make(chan *VirtualPeer, 1)
-	go func() { evePeerCh <- eve.AcceptOne(t) }()
+	go func() { evePeerCh <- eve.AcceptOne(t, dave.Keys.RecvKey.Public) }()
 	time.Sleep(50 * time.Millisecond)
 	dave.Dial(t, eve)
 	<-evePeerCh
@@ -361,14 +361,14 @@ func TestBeaconRelayForwarding(t *testing.T) {
 
 	// Alice 连接到 Bob
 	bobPeerCh := make(chan *VirtualPeer, 1)
-	go func() { bobPeerCh <- bob.AcceptOne(t) }()
+	go func() { bobPeerCh <- bob.AcceptOne(t, alice.Keys.RecvKey.Public) }()
 	time.Sleep(50 * time.Millisecond)
 	aliceToBob := alice.Dial(t, bob)
 	bobFromAlice := <-bobPeerCh
 
 	// Bob 连接到 Charlie
 	charliePeerCh := make(chan *VirtualPeer, 1)
-	go func() { charliePeerCh <- charlie.AcceptOne(t) }()
+	go func() { charliePeerCh <- charlie.AcceptOne(t, bob.Keys.RecvKey.Public) }()
 	time.Sleep(50 * time.Millisecond)
 	bobToCharlie := bob.Dial(t, charlie)
 	charlieFromBob := <-charliePeerCh

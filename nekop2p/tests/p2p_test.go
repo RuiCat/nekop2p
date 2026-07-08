@@ -129,7 +129,7 @@ func TestNoiseHandshakeStress(t *testing.T) {
 		a, _ := crypto.GenerateDualKeys()
 		b, _ := crypto.GenerateDualKeys()
 		h1 := noise.NewInitiatorIK(&b.RecvKey, &a.RecvKey.Public, noise.RoleFriend)
-		h2 := noise.NewResponderIK(&a.RecvKey, [32]byte{}, noise.RoleFriend)
+		h2, _ := noise.NewResponderIK(&a.RecvKey, b.RecvKey.Public, noise.RoleFriend)
 		m1, _ := h1.WriteMessage(nil)
 		_, _ = h2.ReadMessage(m1)
 		m2, _ := h2.WriteMessage(nil)

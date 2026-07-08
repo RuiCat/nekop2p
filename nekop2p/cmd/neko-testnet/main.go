@@ -159,61 +159,65 @@ func runNode(n *TestNode, allNodes []*TestNode, wg *sync.WaitGroup) {
 func handleConnection(n *TestNode, conn net.Conn) {
 	defer conn.Close()
 
-	// Noise IK 响应方
-	hs := noise.NewResponderIK(&n.Keys.RecvKey, [32]byte{}, noise.RoleFriend)
 	buf := make([]byte, 8192)
 	nr, err := conn.Read(buf)
 	if err != nil {
 		return
 	}
-	payload, err := hs.ReadMessage(buf[:nr])
-	if err != nil {
-		return
+
+	// Noise IK 响应方 — 遍历好友列表尝试匹配
+	var payload []byte
+	for _, friendKeys := range n.Friends {
+		hs, hsErr := noise.NewResponderIK(&n.Keys.RecvKey, friendKeys.RecvKey.Public, noise.RoleFriend)
+		if hsErr != nil {
+			continue
+		}
+		p, readErr := hs.ReadMessage(buf[:nr])
+		if readErr != nil {
+			continue
+		}
+		payload = p
+		msg2, _ := hs.WriteMessage(nil)
+		conn.Write(msg2)
+		result := hs.Complete()
+		fr := frame.NewSessionKeys(result.SendCipher.Key[:], result.RecvCipher.Key[:])
+		// 读取帧循环
+		for {
+			f, fErr := fr.ReadEncryptedFrame(conn)
+			if fErr != nil {
+				return
+			}
+			switch f.Type {
+			case frame.FrameBeacon:
+				bp, bpErr := beacon.ParseBeacon(f.Payload)
+				if bpErr != nil {
+					continue
+				}
+				for i := uint8(0); i < bp.SlotCount; i++ {
+					sk, skErr := bp.TryDecryptSlot(int(i), &n.Keys.RecvKey.Private)
+					if skErr != nil {
+						continue
+					}
+					inner, innerErr := bp.DecryptBody(sk)
+					if innerErr != nil {
+						continue
+					}
+					n.mu.Lock()
+					n.messages = append(n.messages, fmt.Sprintf("beacon_from=%x", inner.SenderChainID[:8]))
+					n.mu.Unlock()
+					log.Printf("  [%s] ✓ received beacon from %x", n.Name, inner.SenderChainID[:8])
+				}
+			case frame.FrameData:
+				n.mu.Lock()
+				n.messages = append(n.messages, string(f.Payload))
+				n.mu.Unlock()
+			case frame.FramePing:
+				pong := frame.NewFrame(frame.FramePong, 0, nil)
+				fr.WriteEncryptedFrame(conn, pong)
+			}
+		}
 	}
 	_ = payload
-
-	msg2, _ := hs.WriteMessage(nil)
-	conn.Write(msg2)
-
-	result := hs.Complete()
-	fr := frame.NewSessionKeys(result.SendCipher.Key[:], result.RecvCipher.Key[:])
-
-	// 读取帧
-	for {
-		f, err := fr.ReadEncryptedFrame(conn)
-		if err != nil {
-			return
-		}
-
-		switch f.Type {
-		case frame.FrameBeacon:
-			bp, err := beacon.ParseBeacon(f.Payload)
-			if err != nil {
-				continue
-			}
-			for i := uint8(0); i < bp.SlotCount; i++ {
-				sk, err := bp.TryDecryptSlot(int(i), &n.Keys.RecvKey.Private)
-				if err != nil {
-					continue
-				}
-				inner, err := bp.DecryptBody(sk)
-				if err != nil {
-					continue
-				}
-				n.mu.Lock()
-				n.messages = append(n.messages, fmt.Sprintf("beacon_from=%x", inner.SenderChainID[:8]))
-				n.mu.Unlock()
-				log.Printf("  [%s] ✓ received beacon from %x", n.Name, inner.SenderChainID[:8])
-			}
-		case frame.FrameData:
-			n.mu.Lock()
-			n.messages = append(n.messages, string(f.Payload))
-			n.mu.Unlock()
-		case frame.FramePing:
-			pong := frame.NewFrame(frame.FramePong, 0, nil)
-			fr.WriteEncryptedFrame(conn, pong)
-		}
-	}
 }
 
 func dialNode(from, to *TestNode) (net.Conn, *frame.SessionKeys, error) {
@@ -320,7 +324,7 @@ func testRelayConnection(alice, bob, charlie *TestNode) {
 
 	go func() {
 		conn, _ := bobLn.Accept()
-		hs := noise.NewResponderIK(&bob.Keys.RecvKey, [32]byte{}, noise.RoleFriend)
+		hs, _ := noise.NewResponderIK(&bob.Keys.RecvKey, alice.Keys.RecvKey.Public, noise.RoleFriend)
 		buf := make([]byte, 8192)
 		nr, _ := conn.Read(buf)
 		hs.ReadMessage(buf[:nr])
@@ -331,7 +335,7 @@ func testRelayConnection(alice, bob, charlie *TestNode) {
 	}()
 	go func() {
 		conn, _ := charlieLn.Accept()
-		hs := noise.NewResponderIK(&charlie.Keys.RecvKey, [32]byte{}, noise.RoleFriend)
+		hs, _ := noise.NewResponderIK(&charlie.Keys.RecvKey, bob.Keys.RecvKey.Public, noise.RoleFriend)
 		buf := make([]byte, 8192)
 		nr, _ := conn.Read(buf)
 		hs.ReadMessage(buf[:nr])

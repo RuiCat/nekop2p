@@ -13,7 +13,7 @@ func TestNoiseIKHandshake(t *testing.T) {
 
 	// Bob 以 IK 模式向 Alice 发起握手
 	bobHS := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
-	aliceHS := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend)
+	aliceHS, _ := noise.NewResponderIK(aliceKey, bobKey.Public, noise.RoleFriend)
 
 	// IK msg1: Bob → Alice
 	msg1, err := bobHS.WriteMessage([]byte("hello from bob"))
@@ -61,7 +61,7 @@ func TestNoiseIKEncryptedTransport(t *testing.T) {
 	bobKey, _ := crypto.GenerateEphemeralKey()
 
 	bobHS := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
-	aliceHS := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend)
+	aliceHS, _ := noise.NewResponderIK(aliceKey, bobKey.Public, noise.RoleFriend)
 
 	msg1, _ := bobHS.WriteMessage(nil)
 	aliceHS.ReadMessage(msg1)
@@ -150,7 +150,7 @@ func TestNoisePrologueSeparation(t *testing.T) {
 
 	// 相同密钥但不同角色 → 产生不同的会话密钥
 	bobFriend := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
-	aliceFriend := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend)
+	aliceFriend, _ := noise.NewResponderIK(aliceKey, bobKey.Public, noise.RoleFriend)
 
 	msg1, _ := bobFriend.WriteMessage(nil)
 	aliceFriend.ReadMessage(msg1)
@@ -161,7 +161,7 @@ func TestNoisePrologueSeparation(t *testing.T) {
 
 	// 现在用不同角色尝试同一对密钥
 	bobPadding := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RolePadding)
-	alicePadding := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RolePadding)
+	alicePadding, _ := noise.NewResponderIK(aliceKey, bobKey.Public, noise.RolePadding)
 
 	msg1b, _ := bobPadding.WriteMessage(nil)
 	alicePadding.ReadMessage(msg1b)
@@ -173,5 +173,30 @@ func TestNoisePrologueSeparation(t *testing.T) {
 	// Friend 和 Padding 应产生不同的会话密钥
 	if bobFriendR.SendCipher.Key == bobPaddingR.SendCipher.Key {
 		t.Error("different prologues should produce different session keys")
+	}
+}
+
+// TestNoiseIKNewResponderRejectsZero verifies that NewResponderIK returns an error
+// when passed a zero expectedInitiatorStatic, closing the identity verification bypass.
+func TestNoiseIKNewResponderRejectsZero(t *testing.T) {
+	aliceKey, _ := crypto.GenerateEphemeralKey()
+	if _, err := noise.NewResponderIK(aliceKey, [32]byte{}, noise.RoleFriend); err == nil {
+		t.Error("NewResponderIK should return error when expectedInitiatorStatic is zero")
+	}
+}
+
+// TestNoiseIKWrongExpectedKey verifies that the IK handshake fails when the
+// responder supplies the wrong expected initiator key.
+func TestNoiseIKWrongExpectedKey(t *testing.T) {
+	aliceKey, _ := crypto.GenerateEphemeralKey()
+	bobKey, _ := crypto.GenerateEphemeralKey()
+	eveKey, _ := crypto.GenerateEphemeralKey()
+
+	bobHS := noise.NewInitiatorIK(bobKey, &aliceKey.Public, noise.RoleFriend)
+	aliceHS, _ := noise.NewResponderIK(aliceKey, eveKey.Public, noise.RoleFriend)
+
+	msg1, _ := bobHS.WriteMessage(nil)
+	if _, err := aliceHS.ReadMessage(msg1); err == nil {
+		t.Error("handshake should fail when responder expects wrong initiator key")
 	}
 }
