@@ -199,7 +199,7 @@ func TestOnionTooShortPath(t *testing.T) {
 	}
 }
 
-func TestSelector(t *testing.T) {
+func TestPathSelector(t *testing.T) {
 	keys := make([]*crypto.DualKeys, 10)
 	friends := make([]onion.Hop, 5)
 	publics := make([]onion.Hop, 5)
@@ -219,7 +219,7 @@ func TestSelector(t *testing.T) {
 		}
 	}
 
-	s := onion.NewSelector(friends, publics)
+	s := onion.NewPathSelector(friends, publics)
 
 	// 选择一条 3 跳路径
 	path, err := s.SelectPath(3)

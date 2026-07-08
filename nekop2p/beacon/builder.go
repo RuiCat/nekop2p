@@ -157,21 +157,68 @@ func BuildResponse(inner *InnerPayload, responderChainID [ChainIDSize]byte,
 }
 
 // VerifyResponse 验证一个 BeaconResponse。
+// 解密内层响应并验证: 签名、nonce匹配、时间戳窗口。
 func VerifyResponse(encryptedPayload []byte, recvPriv *[32]byte, sendPK *[32]byte,
 	expectedNonce [NonceSize]byte) (*InnerResponse, error) {
 
-	// 1. 用我们的 recv_sk 解密
+	raw, err := DecryptResponsePayload(encryptedPayload, recvPriv)
+	if err != nil {
+		return nil, err
+	}
+
+	// 验证签名
+	if !ed25519.Verify(sendPK[:], raw.SignedData, raw.Signature) {
+		return nil, ErrInvalidSignature
+	}
+
+	// 验证 nonce 匹配
+	if raw.BeaconNonce != expectedNonce {
+		return nil, ErrNonceMismatch
+	}
+
+	// 验证时间戳（5 分钟窗口）
+	ts := time.Unix(raw.Timestamp, 0)
+	if time.Since(ts) > 5*time.Minute || time.Since(ts) < -5*time.Minute {
+		return nil, fmt.Errorf("%w: %s", ErrBeaconExpired, ts)
+	}
+
+	return &InnerResponse{
+		ResponderIPv6:      raw.ResponderIPv6,
+		ResponderPort:      raw.ResponderPort,
+		BeaconNonce:        raw.BeaconNonce,
+		EphemeralRatchetPK: raw.EphemeralRatchetPK,
+		Timestamp:          raw.Timestamp,
+	}, nil
+}
+
+// rawInnerResponse 解密后的内层响应原始数据（未验证签名/nonce）。
+type rawInnerResponse struct {
+	ResponderIPv6      [IPv6Size]byte
+	ResponderPort      uint16
+	BeaconNonce        [NonceSize]byte
+	EphemeralRatchetPK [32]byte
+	Timestamp          int64
+	SignedData         []byte // 被签名的原始字节
+	Signature          []byte // Ed25519 签名
+}
+
+// DecryptResponsePayload 解密信标响应载荷并解析内层结构。
+// 不验证签名和 nonce——调用方可在解密后自行决定验证策略。
+// 这使得 handleBeaconResponse 可以先获取 nonce 再 O(1) 查找，
+// 而非遍历所有 pending nonce (旧 O(n) 方案)。
+func DecryptResponsePayload(encryptedPayload []byte, recvPriv *[32]byte) (*rawInnerResponse, error) {
+	// 1. KEM 解密
 	plain, err := crypto.KEMDecrypt(recvPriv, encryptedPayload)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt response: %w", err)
 	}
 
-	// 2. 解析内层响应
+	// 2. 解析内层
 	if len(plain) < IPv6Size+2+NonceSize+32+8+SigSize {
-		return nil, fmt.Errorf("response too short")
+		return nil, fmt.Errorf("response too short: %d", len(plain))
 	}
 
-	resp := &InnerResponse{}
+	resp := &rawInnerResponse{}
 	offset := 0
 	copy(resp.ResponderIPv6[:], plain[offset:offset+IPv6Size])
 	offset += IPv6Size
@@ -183,24 +230,8 @@ func VerifyResponse(encryptedPayload []byte, recvPriv *[32]byte, sendPK *[32]byt
 	offset += 32
 	resp.Timestamp = int64(binary.BigEndian.Uint64(plain[offset : offset+8]))
 	offset += 8
-	sig := plain[offset:]
-
-	// 3. 验证签名
-	signedData := plain[:offset]
-	if !ed25519.Verify(sendPK[:], signedData, sig) {
-		return nil, ErrInvalidSignature
-	}
-
-	// 4. 验证 nonce 匹配
-	if resp.BeaconNonce != expectedNonce {
-		return nil, ErrNonceMismatch
-	}
-
-	// 5. 验证时间戳（5 分钟窗口）
-	ts := time.Unix(resp.Timestamp, 0)
-	if time.Since(ts) > 5*time.Minute || time.Since(ts) < -5*time.Minute {
-		return nil, fmt.Errorf("%w: %s", ErrBeaconExpired, ts)
-	}
+	resp.SignedData = plain[:offset]
+	resp.Signature = plain[offset:]
 
 	return resp, nil
 }

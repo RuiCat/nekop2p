@@ -6,6 +6,7 @@ import (
 
 	"github.com/nekop2p/nekop2p/x/brightchain/keeper"
 	"github.com/nekop2p/nekop2p/x/brightchain/types"
+	zk "github.com/nekop2p/nekop2p/x/zk"
 )
 
 // MsgServerImpl 实现 MsgServer 接口。
@@ -85,8 +86,16 @@ func (m *MsgServerImpl) Repay(ctx context.Context, msg *types.MsgRepay) (*types.
 	if msg.Amount == 0 {
 		return nil, fmt.Errorf("repay: amount must be > 0")
 	}
-	// 生产环境：验证 ZK 还款证明
-	// zkKeeper.VerifyRepayProof(msg.ZkRepayProof, msg.InkwellRef)
+	// ZK 还款证明验证: 证明暗链某借条已结清
+	if len(msg.ZkRepayProof) > 0 {
+		verifier := m.keeper.ZkVerifier()
+		if verifier != nil {
+			repayAssignment := zk.NewRepayAssignment(string(msg.InkwellRef), msg.Amount)
+			if err := verifier.VerifyRepayProof(msg.ZkRepayProof, repayAssignment); err != nil {
+				return nil, fmt.Errorf("zk repay proof invalid: %w", err)
+			}
+		}
+	}
 
 	// 将还款作为资金池存款处理
 	err := m.keeper.CollectFees(types.UnwrapSDKContext(ctx), msg.Amount)
@@ -105,8 +114,16 @@ func (m *MsgServerImpl) RegisterNode(ctx context.Context, msg *types.MsgRegister
 	if msg.Role != types.NodeRole_OFFICIAL_RELAY && msg.Role != types.NodeRole_OFFICIAL_RECORD {
 		return nil, fmt.Errorf("register_node: role must be OFFICIAL_RELAY or OFFICIAL_RECORD")
 	}
-	// 生产环境：验证 ZK 工作证明
-	// zkKeeper.VerifyWorkProof(msg.ZkWeightProof, msg.ExamResultHash)
+	// ZK 工作量证明验证: 证明节点完成了转发/存储工作
+	if len(msg.ZkWeightProof) > 0 {
+		verifier := m.keeper.ZkVerifier()
+		if verifier != nil {
+			workAssignment := zk.NewWorkAssignment(msg.NodeAddress, msg.ExamResultHash, 0)
+			if err := verifier.VerifyWorkProof(msg.ZkWeightProof, workAssignment); err != nil {
+				return nil, fmt.Errorf("zk work proof invalid: %w", err)
+			}
+		}
+	}
 
 	err := m.keeper.SetNodeRole(types.UnwrapSDKContext(ctx), msg.NodeAddress, msg.Role)
 	if err != nil {

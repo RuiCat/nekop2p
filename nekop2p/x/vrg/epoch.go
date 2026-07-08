@@ -162,14 +162,20 @@ func (ec *EpochCounter) IsolationCount() uint64 {
 // E10: 跨纪元双花冲突检测
 // ============================================================
 
+// receiptBinding 记录收据与其源社区的绑定。
+type receiptBinding struct {
+	receiptID       [32]byte
+	sourceCommunity [32]byte
+}
+
 // DoubleSpendDetector 双花冲突检测器。
 // 追踪每个 [资产标识 + Epoch] 的唯一收据绑定。
 type DoubleSpendDetector struct {
 	mu sync.RWMutex
 
-	// 资产绑定: assetKey → epoch → receiptID
+	// 资产绑定: assetKey → epoch → receiptBinding
 	// 同一资产在同一 Epoch 只能绑定一个收据
-	bindings map[string]map[uint64][32]byte
+	bindings map[string]map[uint64]receiptBinding
 
 	// 已检测到的冲突
 	collisions []CollisionEvent
@@ -191,7 +197,7 @@ type CollisionEvent struct {
 // NewDoubleSpendDetector 创建双花检测器。
 func NewDoubleSpendDetector() *DoubleSpendDetector {
 	return &DoubleSpendDetector{
-		bindings:   make(map[string]map[uint64][32]byte),
+		bindings:   make(map[string]map[uint64]receiptBinding),
 		collisions: make([]CollisionEvent, 0),
 	}
 }
@@ -209,32 +215,36 @@ func (dsd *DoubleSpendDetector) RegisterReceipt(
 
 	// 初始化
 	if _, exists := dsd.bindings[assetKey]; !exists {
-		dsd.bindings[assetKey] = make(map[uint64][32]byte)
+		dsd.bindings[assetKey] = make(map[uint64]receiptBinding)
 	}
 
 	// 检查同一 Epoch 是否已有绑定
-	if existingReceipt, exists := dsd.bindings[assetKey][epoch]; exists {
+	if existing, exists := dsd.bindings[assetKey][epoch]; exists {
 		// 🔴 双花冲突检测！
 		collision := CollisionEvent{
 			AssetKey:         assetKey,
 			Epoch:            epoch,
-			ReceiptA:         existingReceipt,
+			ReceiptA:         existing.receiptID,
 			ReceiptB:         receiptID,
-			SourceCommunityA: sourceCommunity,
+			SourceCommunityA: existing.sourceCommunity,
+			SourceCommunityB: sourceCommunity,
 			DetectedAt:       nowUnix(),
 		}
 
 		dsd.collisions = append(dsd.collisions, collision)
 
 		log.Printf("[double-spend] COLLISION DETECTED: asset=%s epoch=%d receipt_a=%x receipt_b=%x",
-			assetKey, epoch, existingReceipt[:8], receiptID[:8])
+			assetKey, epoch, existing.receiptID[:8], receiptID[:8])
 
 		return &collision, fmt.Errorf("double spend: asset %s already bound to receipt %x in epoch %d",
-			assetKey, existingReceipt[:8], epoch)
+			assetKey, existing.receiptID[:8], epoch)
 	}
 
 	// 注册绑定
-	dsd.bindings[assetKey][epoch] = receiptID
+	dsd.bindings[assetKey][epoch] = receiptBinding{
+		receiptID:       receiptID,
+		sourceCommunity: sourceCommunity,
+	}
 
 	return nil, nil
 }
@@ -243,7 +253,13 @@ func (dsd *DoubleSpendDetector) RegisterReceipt(
 func (dsd *DoubleSpendDetector) GetBindings(assetKey string) map[uint64][32]byte {
 	dsd.mu.RLock()
 	defer dsd.mu.RUnlock()
-	return dsd.bindings[assetKey]
+	result := make(map[uint64][32]byte)
+	if epochBindings, exists := dsd.bindings[assetKey]; exists {
+		for epoch, binding := range epochBindings {
+			result[epoch] = binding.receiptID
+		}
+	}
+	return result
 }
 
 // IsDoubleSpent 检查资产在某 Epoch 是否已经绑定。

@@ -139,14 +139,14 @@ func (k *Keeper) RequestLoan(msg *types.MsgRequestLoan) (*types.LoanRecord, erro
 
 		// 如果提供了 ZK 证明，额外验证（信用>=阈值的零知识证明）
 		if len(msg.ZkCreditProof) > 0 && k.zkVerifier != nil {
-			creditAssignment := zk.NewCreditAssignment(msg.Amount)
+			creditAssignment := zk.NewCreditAssignment(msg.Amount, 0)
 			if err := k.zkVerifier.VerifyCreditProof(msg.ZkCreditProof, creditAssignment); err != nil {
 				return nil, fmt.Errorf("darkchain: zk credit proof invalid: %w", err)
 			}
 		}
 	} else if len(msg.ZkCreditProof) > 0 && k.zkVerifier != nil {
 		// 仅 ZK 证明路径（无 UTXO 票据时使用 ZK 证明信用达标）
-		creditAssignment := zk.NewCreditAssignment(msg.Amount)
+		creditAssignment := zk.NewCreditAssignment(msg.Amount, 0)
 		if err := k.zkVerifier.VerifyCreditProof(msg.ZkCreditProof, creditAssignment); err != nil {
 			return nil, fmt.Errorf("darkchain: zk credit proof invalid: %w", err)
 		}
@@ -189,56 +189,19 @@ func (k *Keeper) ApproveLoan(msg *types.MsgApproveLoan) (*types.LoanRecord, erro
 		return nil, fmt.Errorf("darkchain: loan %s is not pending", msg.LoanID)
 	}
 
-	// === Commit-Reveal 种子验证 ===
-	// 如果借款人提供了种子承诺，验证贷款人揭示的种子是否匹配
+	// === Commit-Reveal 种子验证：贷款人揭示种子 ===
+	// 如果借款人提供了种子承诺，贷款人必须在批准时揭示自己的种子。
+	// 借款人的种子揭示延迟到 RevealBorrowerSeed 调用。
 	var zeroSeed [32]byte
 	if loan.BorrowerSeedCommit != zeroSeed {
-		// 验证借款人种子承诺：SHA256(seed || party_id || nonce) == commit
-		borrowerPartyID := fmt.Sprintf("borrower-%s", msg.LoanID)
-		borrowerValid := inkwell.SeedReveal(loan.BorrowerSeedCommit, msg.BorrowerSeed, msg.BorrowerSeedNonce, borrowerPartyID)
-		if !borrowerValid {
-			return nil, fmt.Errorf("darkchain: borrower seed reveal mismatch for loan %s", msg.LoanID)
+		// 验证贷款人种子承诺：SHA256(seed || party_id || nonce) == commit
+		lenderPartyID := fmt.Sprintf("lender-%s", msg.LoanID)
+		if !inkwell.SeedReveal(msg.LenderSeedCommit, msg.LenderSeed, msg.LenderSeedNonce, lenderPartyID) {
+			return nil, fmt.Errorf("darkchain: lender seed reveal mismatch for loan %s", msg.LoanID)
 		}
 
-		// 验证贷款人种子承诺（如果提供了双向 commit-reveal）
-		var lenderCommitZero [32]byte
-		if msg.LenderSeedCommit != lenderCommitZero {
-			lenderPartyID := fmt.Sprintf("lender-%s", msg.LoanID)
-			lenderValid := inkwell.SeedReveal(msg.LenderSeedCommit, msg.LenderSeed, msg.LenderSeedNonce, lenderPartyID)
-			if !lenderValid {
-				return nil, fmt.Errorf("darkchain: lender seed reveal mismatch for loan %s", msg.LoanID)
-			}
-		}
-
-		// 合并双方种子生成最终混沌参数种子
-		combinedSeed := inkwell.CombineSeeds(msg.BorrowerSeed, msg.LenderSeed)
-
-		// 生成 Inkwell 混沌结算参数
-		var loanIDBytes [32]byte
-		copy(loanIDBytes[:], []byte(msg.LoanID))
-		var borrowerAnonID [32]byte
-		copy(borrowerAnonID[:], loan.BorrowerAnon)
-
-		params, err := inkwell.GenerateParams(
-			loanIDBytes,
-			loan.Amount,
-			msg.BorrowerSeed,
-			msg.LenderSeed,
-			time.Now(),
-			borrowerAnonID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("darkchain: generate inkwell params: %w", err)
-		}
-
-		// 序列化参数用于存储
-		paramsData, err := store.HybridMarshal(params)
-		if err != nil {
-			return nil, fmt.Errorf("darkchain: marshal inkwell params: %w", err)
-		}
-
-		loan.CombinedSeed = combinedSeed
-		loan.InkwellParams = paramsData
+		loan.LenderSeedCommit = msg.LenderSeedCommit
+		loan.LenderSeed = msg.LenderSeed
 	} else if len(msg.InkwellParams) > 0 {
 		// 向后兼容：无 commit-reveal 时直接使用提供的参数
 		loan.InkwellParams = msg.InkwellParams
@@ -258,6 +221,74 @@ func (k *Keeper) ApproveLoan(msg *types.MsgApproveLoan) (*types.LoanRecord, erro
 	// 🔗 触发 ShadowClaim 自动发行（桥接到明域二级市场）
 	if k.shadowClaimCallback != nil {
 		k.shadowClaimCallback(loan)
+	}
+
+	return loan, nil
+}
+
+// RevealBorrowerSeed 处理借款人种子揭示（commit-reveal 第 3 步）。
+// 验证借款人揭示的种子与之前提交的承诺匹配，
+// 然后合并双方种子生成混沌结算参数。
+func (k *Keeper) RevealBorrowerSeed(msg *types.MsgRevealSeed) (*types.LoanRecord, error) {
+	loan := k.GetLoan(msg.LoanID)
+	if loan == nil {
+		return nil, fmt.Errorf("darkchain: loan not found: %s", msg.LoanID)
+	}
+	if loan.Status != types.LoanActive {
+		return nil, fmt.Errorf("darkchain: loan %s is not active", msg.LoanID)
+	}
+
+	var zeroSeed [32]byte
+	if loan.BorrowerSeedCommit == zeroSeed {
+		return nil, fmt.Errorf("darkchain: loan %s has no seed commit (commit-reveal not configured)", msg.LoanID)
+	}
+	if loan.LenderSeed == zeroSeed {
+		return nil, fmt.Errorf("darkchain: loan %s has no lender seed (lender must reveal first)", msg.LoanID)
+	}
+
+	// 验证借款人种子揭示：SHA256(seed || party_id || nonce) == commit
+	borrowerPartyID := fmt.Sprintf("borrower-%s", msg.LoanID)
+	if !inkwell.SeedReveal(loan.BorrowerSeedCommit, msg.BorrowerSeed, msg.BorrowerNonce, borrowerPartyID) {
+		return nil, fmt.Errorf("darkchain: borrower seed reveal mismatch for loan %s", msg.LoanID)
+	}
+
+	// 合并双方种子生成最终混沌参数种子
+	combinedSeed := inkwell.CombineSeeds(msg.BorrowerSeed, loan.LenderSeed)
+
+	// 生成 Inkwell 混沌结算参数
+	var loanIDBytes [32]byte
+	copy(loanIDBytes[:], []byte(msg.LoanID))
+	var borrowerAnonID [32]byte
+	copy(borrowerAnonID[:], loan.BorrowerAnon)
+
+	params, err := inkwell.GenerateParams(
+		loanIDBytes,
+		loan.Amount,
+		msg.BorrowerSeed,
+		loan.LenderSeed,
+		time.Now(),
+		borrowerAnonID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("darkchain: generate inkwell params: %w", err)
+	}
+
+	// 序列化参数用于存储
+	paramsData, err := store.HybridMarshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("darkchain: marshal inkwell params: %w", err)
+	}
+
+	loan.CombinedSeed = combinedSeed
+	loan.InkwellParams = paramsData
+
+	data, err := store.HybridMarshal(loan)
+	if err != nil {
+		return nil, fmt.Errorf("darkchain: marshal loan: %w", err)
+	}
+	err = k.store.Write(func(tx *store.Tx) error { return tx.PutLoan(msg.LoanID, data) })
+	if err != nil {
+		return nil, err
 	}
 
 	return loan, nil

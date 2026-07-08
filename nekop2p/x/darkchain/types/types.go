@@ -47,12 +47,12 @@ type MsgApproveLoan struct {
 	LenderSeedCommit  [32]byte // 贷款人的种子承诺（可选：用于双向 commit-reveal）
 }
 
-// MsgRevealSeed 独立的种子揭示消息（可选，用于分离 commit 和 reveal 阶段）
+// MsgRevealSeed 种子揭示消息（用于分离 commit 和 reveal 阶段）。
+// 借款人在贷款人批准后使用此消息揭示自己的种子。
 type MsgRevealSeed struct {
-	LoanID      string
-	PartyAnon   []byte   // 揭示方匿名化名
-	Seed        [32]byte // 揭示的种子
-	Nonce       [32]byte // 揭示的 nonce
+	LoanID        string
+	BorrowerSeed  [32]byte
+	BorrowerNonce [32]byte
 }
 
 type MsgSettleLoan struct {
@@ -77,6 +77,8 @@ type LoanRecord struct {
 	SettledAt     int64
 	// === Commit-Reveal 种子协商状态 ===
 	BorrowerSeedCommit [32]byte // 借款人的种子承诺
+	LenderSeedCommit   [32]byte // 贷款人的种子承诺
+	LenderSeed         [32]byte // 贷款人揭示的种子
 	CombinedSeed       [32]byte // 合并后的最终种子
 	// === UTXO 信用票据花费追踪 ===
 	SpentNullifiers [][32]byte // 该贷款花费的 nullifier 列表

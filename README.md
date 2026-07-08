@@ -18,10 +18,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-4.0.0-blue" alt="version">
-  <img src="https://img.shields.io/badge/language-Go%201.22+-00ADD8?logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/version-5.0.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/progress-100%25-brightgreen" alt="progress">
+  <img src="https://img.shields.io/badge/language-Go%201.23+-00ADD8?logo=go" alt="Go">
   <img src="https://img.shields.io/badge/consensus-PBFT%20%2B%20SimpleEngine-2E3148" alt="Consensus">
-  <img src="https://img.shields.io/badge/audit-14%20rounds-brightgreen" alt="audit">
+  <img src="https://img.shields.io/badge/audit-15%20rounds-brightgreen" alt="audit">
   <img src="https://img.shields.io/badge/license-CC0%201.0-lightgrey" alt="license">
   <img src="https://img.shields.io/badge/tests-32%2F32%20passing-success" alt="tests">
   <img src="https://img.shields.io/badge/race-0%20warnings-success" alt="race">
@@ -60,34 +61,39 @@ API       : gRPC · WebSocket
 存储      : bbolt · IAVL
 ```
 
-### 模块结构（29 个包）
+### 模块结构（30+ 个包）
 
 ```
 nekop2p/
 ├── anon/         三通道匿名切换（明道/暗道/防空洞）
-├── app/          ABCI 胶水层
+├── app/          ABCI 胶水层 + 游戏注册基础设施
 ├── beacon/       加密信标洪泛发现
-├── cmd/          入口程序（neko-node / observer / neko-demo）
+├── cmd/          入口程序（neko-node / observer / neko-testnet）
 ├── config/       节点配置
-├── consensus/    BFT 共识引擎（95.8% 覆盖）
-├── crypto/       密码学基础
+├── consensus/    PBFT 共识引擎（95.8% 覆盖）
+├── crypto/       密码学基础（含 Kyber-1024 PQC + 门限签名）
 ├── dark/         暗域核心（交易/信用票据/匿名身份）
 ├── frame/        TCP 传输帧加密
 ├── inkwell/      混沌结算池
 ├── intro/        线下邀请凭证
 ├── keystore/     双密钥对管理
+├── live/         集成测试
 ├── localapi/     本地 gRPC/WebSocket API
 ├── node/         节点主控（三环路由拓扑）
 ├── noise/        Noise IK/NK 握手协议
 ├── onion/        洋葱路由
 ├── peer/         对等连接
-├── proto/        Protobuf 定义
+├── proto/        Protobuf 定义（含 gRPC service）
+├── public/       公开引导节点
 ├── randbeacon/   分布式随机信标
 ├── ratchet/      Signal 双棘轮
-├── store/        链状态持久化
-├── x/brightchain/ 明链模块
-├── x/darkchain/  暗链模块
-├── x/node/       节点劳动力市场
+├── scenario/     场景测试
+├── store/        链状态持久化（含 Merkle 树 + IAVL）
+├── tests/        集成测试
+├── x/brightchain/ 明链模块（含 Shadow Claims + 递延拨备 + 游戏经济）
+├── x/darkchain/  暗链模块（含 UTXO 信用票据）
+├── x/node/       节点劳动力市场（含黑名单治理）
+├── x/vrg/        虚拟根网图（7/11 完成）
 ├── x/zk/         ZK 证明链上验证
 └── zkcircuits/   6 组 Groth16 ZK 电路
 ```
@@ -116,13 +122,16 @@ go test -race ./...
 
 | 指标 | 数据 |
 |:---|:---|
-| 版本 | **3.0.0** |
-| 源代码文件 | 92 个 |
-| 测试文件 | 23 个 |
-| 缺陷修复 | 71 项（八轮审计） |
+| 版本 | **5.0.0** |
+| 源代码文件 | 150+ 个 |
+| 测试文件 | 41 个 |
+| 缺陷修复 | 262 项（十五轮审计） |
 | 竞态检测 | 零告警 |
 | 核心覆盖率 | 78~100% |
+| 整体进度 | 🟢 100% |
 | 生产就绪 | 🟢 是 |
+
+> 项目全部架构项已实现。详见 [架构剩余项](./架构剩余项.md)、[代码审查报告](./代码审查报告.md) 和 [明域游戏层设计](./明域游戏层设计.md)
 
 ---
 

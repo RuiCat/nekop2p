@@ -45,7 +45,7 @@ func NewTopology() *Topology {
 }
 
 // AddCoreFriend 添加或更新一个核心好友。
-func (t *Topology) AddCoreFriend(chainID peer.ChainID, recvPK, sendPK [32]byte) *CoreFriend {
+func (t *Topology) AddCoreFriend(chainID peer.ChainID, recvPK, sendPK [32]byte, ipv6 [16]byte, port uint16) *CoreFriend {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -53,6 +53,8 @@ func (t *Topology) AddCoreFriend(chainID peer.ChainID, recvPK, sendPK [32]byte) 
 		ChainID: chainID,
 		RecvPK:  recvPK,
 		SendPK:  sendPK,
+		IPv6:    ipv6,
+		Port:    port,
 	}
 	t.core[chainID] = cf
 	return cf

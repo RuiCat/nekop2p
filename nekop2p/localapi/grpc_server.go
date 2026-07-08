@@ -124,10 +124,11 @@ func (*GNodeStatus) ProtoMessage()    {}
 // GRPCServer 提供基于 gRPC 的本地 API 服务。
 // 利用自定义服务描述符手动注册方法，避免 protoc 代码生成依赖。
 type GRPCServer struct {
-	grpcServer *grpc.Server
-	listener   net.Listener
-	svc        *Server // 包装的 HTTP 服务器以获取回调
-	started    time.Time
+	grpcServer    *grpc.Server
+	listener      net.Listener
+	svc           *Server // 包装的 HTTP 服务器以获取回调
+	started       time.Time
+	currentHeight int64 // 当前链高度，由外部定期更新
 }
 
 // NewGRPCServer 创建新的 gRPC 服务器。
@@ -198,6 +199,11 @@ func (gs *GRPCServer) Stop() {
 // Addr 返回监听地址。
 func (gs *GRPCServer) Addr() string {
 	return gs.listener.Addr().String()
+}
+
+// SetCurrentHeight 更新当前链高度，供 SubmitTransaction 和 GetNodeStatus 使用。
+func (gs *GRPCServer) SetCurrentHeight(h int64) {
+	gs.currentHeight = h
 }
 
 // ============================================================
@@ -326,7 +332,7 @@ func (gs *GRPCServer) SubmitTransaction(ctx context.Context, req *GSubmitTxReque
 	txID := gs.svc.cfg.OnSubmitTx(req.TxType, req.TxData)
 	return &GSubmitTxResponse{
 		TxHash: txID,
-		Height: 0, // 由后续区块填充
+		Height: gs.currentHeight,
 	}, nil
 }
 
@@ -353,11 +359,19 @@ func (gs *GRPCServer) GetNodeStatus(ctx context.Context, req *GEmpty) (*GNodeSta
 	if gs.svc.cfg.OnStatus != nil {
 		info = gs.svc.cfg.OnStatus()
 	}
+	poolBalance := uint64(0)
+	if info.Chain != nil {
+		poolBalance = info.Chain.PoolBalance
+	}
+	height := info.Height
+	if height == 0 {
+		height = gs.currentHeight
+	}
 	return &GNodeStatus{
 		SyncProfile:   info.State,
 		PeersOnline:   int32(info.Peers),
-		ChainHeight:   info.Height,
-		PoolBalance:   0, // 生产环境从链上查询
+		ChainHeight:   height,
+		PoolBalance:   poolBalance,
 		FriendsOnline: int32(info.OnlineFriends),
 	}, nil
 }

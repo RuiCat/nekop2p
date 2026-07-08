@@ -70,7 +70,7 @@ func TestTopologyAddFriend(t *testing.T) {
 	friendKeys, _ := crypto.GenerateDualKeys()
 	friendCID := crypto.DeriveChainID(friendKeys.SendKey.Public)
 
-	n.AddCoreFriend(friendCID, friendKeys.RecvKey.Public, friendKeys.SendKey.Public)
+	n.AddCoreFriend(friendCID, friendKeys.RecvKey.Public, friendKeys.SendKey.Public, [16]byte{}, 0)
 
 	friends := n.Friends()
 	if len(friends) != 1 {
@@ -97,7 +97,7 @@ func TestTopologyMultipleFriends(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		fk, _ := crypto.GenerateDualKeys()
 		fcid := crypto.DeriveChainID(fk.SendKey.Public)
-		n.AddCoreFriend(fcid, fk.RecvKey.Public, fk.SendKey.Public)
+		n.AddCoreFriend(fcid, fk.RecvKey.Public, fk.SendKey.Public, [16]byte{}, 0)
 	}
 
 	if len(n.Friends()) != 5 {
@@ -118,8 +118,8 @@ func TestTopologyDuplicateFriend(t *testing.T) {
 	fcid := crypto.DeriveChainID(fk.SendKey.Public)
 
 	// 添加同一个好友两次应该覆盖而非重复
-	n.AddCoreFriend(fcid, fk.RecvKey.Public, fk.SendKey.Public)
-	n.AddCoreFriend(fcid, fk.RecvKey.Public, fk.SendKey.Public)
+	n.AddCoreFriend(fcid, fk.RecvKey.Public, fk.SendKey.Public, [16]byte{}, 0)
+	n.AddCoreFriend(fcid, fk.RecvKey.Public, fk.SendKey.Public, [16]byte{}, 0)
 
 	if len(n.Friends()) != 1 {
 		t.Errorf("expected 1 friend after duplicate add, got %d", len(n.Friends()))
@@ -198,7 +198,7 @@ func TestFriendsOfflineByDefault(t *testing.T) {
 
 	fk, _ := crypto.GenerateDualKeys()
 	fcid := crypto.DeriveChainID(fk.SendKey.Public)
-	n.AddCoreFriend(fcid, fk.RecvKey.Public, fk.SendKey.Public)
+	n.AddCoreFriend(fcid, fk.RecvKey.Public, fk.SendKey.Public, [16]byte{}, 0)
 
 	friends := n.Friends()
 	if len(friends) != 1 {

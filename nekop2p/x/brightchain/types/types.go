@@ -31,13 +31,19 @@ type QueryServer interface {
 	// 在 query.proto 中定义
 }
 
-// RegisterMsgServer 注册消息服务器。模块骨架桩。
+// RegisterMsgServer 注册消息服务器。
+// 当前构建模式 (非 Cosmos SDK) 下为空桩。
+// Cosmos SDK 构建时 (//go:build cosmos) 由 protobuf 生成的 RegisterMsgServer 替代。
 func RegisterMsgServer(srv interface{}, impl MsgServer) {}
 
-// RegisterQueryServer 注册查询服务器。模块骨架桩。
+// RegisterQueryServer 注册查询服务器。
+// 当前构建模式 (非 Cosmos SDK) 下为空桩。
+// Cosmos SDK 构建时 (//go:build cosmos) 由 protobuf 生成的 RegisterQueryServer 替代。
 func RegisterQueryServer(srv interface{}, impl QueryServer) {}
 
-// UnwrapSDKContext 提取 SDK 上下文。桩。
+// UnwrapSDKContext 提取 SDK 上下文。
+// 当前构建模式 (非 Cosmos SDK) 下为恒等映射 (Context 直通)。
+// Cosmos SDK 构建时由 sdk.UnwrapSDKContext 替代。
 func UnwrapSDKContext(ctx Context) Context { return ctx }
 
 

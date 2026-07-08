@@ -290,8 +290,8 @@ func (e *PBFTEngine) ProposeBlock(txs [][]byte) ([]byte, int64, error) {
 	e.mu.Unlock()
 
 	// 构建提案
-	blockHash := computeBlockHash(txs, h)
-	blockData := flattenTxs(txs)
+	blockHash := ComputeBlockHash(txs, h)
+	blockData := FlattenTxs(txs)
 	if blockData == nil {
 		blockData = []byte(fmt.Sprintf("block-%d", h)) // 确保非 nil
 	}
@@ -605,27 +605,4 @@ func (e *PBFTEngine) scheduleTimeout() {
 
 func (e *PBFTEngine) getValidatorPower(pubKey [32]byte) int64 {
 	return e.validators.ValidatorPower(pubKey)
-}
-
-// ============================================================
-// 全局函数
-// ============================================================
-
-func computeBlockHash(txs [][]byte, height int64) [32]byte {
-	h := sha256.New()
-	for _, tx := range txs {
-		h.Write(tx)
-	}
-	h.Write([]byte(fmt.Sprintf("%d", height)))
-	var result [32]byte
-	copy(result[:], h.Sum(nil))
-	return result
-}
-
-func flattenTxs(txs [][]byte) []byte {
-	var result []byte
-	for _, tx := range txs {
-		result = append(result, tx...)
-	}
-	return result
 }

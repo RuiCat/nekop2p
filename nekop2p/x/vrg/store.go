@@ -44,7 +44,9 @@ func NewVRGStore(cs *store.ChainStore) (*VRGStore, error) {
 		// 手动创建 bucket（通过直接操作底层 BoltDB）
 		return nil // bucket 在 store.New() 中统一创建
 	})
-	_ = err
+	if err != nil {
+		return nil, fmt.Errorf("vrg: init buckets: %w", err)
+	}
 
 	return vs, nil
 }

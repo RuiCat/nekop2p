@@ -147,11 +147,13 @@ func (c *SimpleIdentityCircuit) Define(api frontend.API) error {
 
 // NewIdentityAssignment 创建用于链上验证的身份电路赋值。
 // sendPk 作为公开输入传递给 ZK 验证器。
-func NewIdentityAssignment(sendPk []byte) *SimpleIdentityCircuit {
+// merkleRoot 为链上状态树根（生产环境: 从链上获取）。
+// trustThreshold 为链上信任阈值参数（生产环境: 从链上参数获取）。
+func NewIdentityAssignment(sendPk []byte, merkleRoot, trustThreshold uint64) *SimpleIdentityCircuit {
 	return &SimpleIdentityCircuit{
 		MySendPK:       bytesToVariable(sendPk),
-		MerkleRoot:     0, // 生产环境: 从链上状态树获取
-		TrustThreshold: 0, // 生产环境: 从链上参数获取
+		MerkleRoot:     merkleRoot,
+		TrustThreshold: trustThreshold,
 	}
 }
 
@@ -176,9 +178,49 @@ func (c *SimpleCreditCircuit) Define(api frontend.API) error {
 }
 
 // NewCreditAssignment 创建用于链上验证的信用电路赋值。
-func NewCreditAssignment(amount uint64) *SimpleCreditCircuit {
+// creditTreeRoot 为链上信用树根（生产环境: 从链上信用树获取）。
+func NewCreditAssignment(amount uint64, creditTreeRoot uint64) *SimpleCreditCircuit {
 	return &SimpleCreditCircuit{
 		LoanAmount:     amount,
-		CreditTreeRoot: 0, // 生产环境: 从链上信用树获取
+		CreditTreeRoot: creditTreeRoot,
+	}
+}
+
+// SimpleRepayCircuit 简化的还款电路赋值，用于链上验证。
+type SimpleRepayCircuit struct {
+	LoanID  frontend.Variable `gnark:",public"`
+	Amount  frontend.Variable `gnark:",public"`
+}
+
+func (c *SimpleRepayCircuit) Define(api frontend.API) error {
+	return nil
+}
+
+// NewRepayAssignment 创建用于链上验证的还款电路赋值。
+func NewRepayAssignment(loanID string, amount uint64) *SimpleRepayCircuit {
+	return &SimpleRepayCircuit{
+		LoanID: bytesToVariable([]byte(loanID)),
+		Amount: amount,
+	}
+}
+
+// SimpleWorkCircuit 简化的工作量电路赋值，用于链上验证。
+type SimpleWorkCircuit struct {
+	NodeID    frontend.Variable `gnark:",public"`
+	Epoch     frontend.Variable `gnark:",public"`
+	WorkHash  frontend.Variable `gnark:",public"`
+}
+
+func (c *SimpleWorkCircuit) Define(api frontend.API) error {
+	return nil
+}
+
+// NewWorkAssignment 创建用于链上验证的工作量电路赋值。
+// epoch 为当前链上 Epoch（生产环境: 从链上获取）。
+func NewWorkAssignment(nodeAddress string, examHash []byte, epoch uint64) *SimpleWorkCircuit {
+	return &SimpleWorkCircuit{
+		NodeID:   bytesToVariable([]byte(nodeAddress)),
+		Epoch:    epoch,
+		WorkHash: bytesToVariable(examHash),
 	}
 }

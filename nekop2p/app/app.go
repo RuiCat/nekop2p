@@ -11,12 +11,14 @@ package app
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/nekop2p/nekop2p/app/game/state"
 	"github.com/nekop2p/nekop2p/store"
 	"github.com/nekop2p/nekop2p/x/brightchain"
 	brightkeeper "github.com/nekop2p/nekop2p/x/brightchain/keeper"
@@ -47,9 +49,11 @@ type NekoApp struct {
 	npMu            sync.Mutex // 保护 nodePerformance 并发访问
 	txHistory      []*Tx     // 最近交易记录 (最多100条)
 	txMu           sync.Mutex
-	gameRegistry   map[string]*brighttypes.GameInfo // 游戏注册表
-	gamesMu        sync.Mutex
-	gameServers    map[string]string // node_id → game_id 绑定
+	gameRegistry map[string]*brighttypes.GameInfo // 游戏注册表
+	gameEngines  map[string]*state.GameStateMachine // 游戏状态机引擎
+	gamesMu      sync.Mutex
+	gameServers  map[string]string // node_id → game_id 绑定
+	isOnline     func(chainID string) bool // 在线检测回调（由节点层注入）
 }
 
 type NodeStats struct {
@@ -74,10 +78,11 @@ func NewNekoApp(dataDir string) (*NekoApp, error) {
 		DarkChainKeeper:    dk,
 		BrightChainModule:  brightchain.NewAppModule(bk),
 		DarkChainModule:    darkchain.NewAppModule(dk),
-		NodeGovernor:       node.NewNodeGovernor(),
-		nodePerformance:     make(map[string]*NodeStats),
-		gameRegistry:        make(map[string]*brighttypes.GameInfo),
-		gameServers:         make(map[string]string),
+		NodeGovernor:    node.NewNodeGovernor(),
+		nodePerformance:  make(map[string]*NodeStats),
+		gameRegistry:     make(map[string]*brighttypes.GameInfo),
+		gameEngines:      make(map[string]*state.GameStateMachine),
+		gameServers:      make(map[string]string),
 	}
 
 	// 从持久化恢复区块高度
@@ -325,7 +330,7 @@ func (app *NekoApp) recalculateTrustWeights(ctx brighttypes.Context) {
 // ===== 节点表现追踪 =====
 
 func (app *NekoApp) recordNodePerformance() {
-	users := app.BrightChainKeeper.GetAllUsers(nil)
+	users := app.BrightChainKeeper.GetAllUsers(struct{}{})
 	app.npMu.Lock()
 	defer app.npMu.Unlock()
 	for _, block := range users {
@@ -338,7 +343,10 @@ func (app *NekoApp) recordNodePerformance() {
 			app.nodePerformance[block.Address] = stats
 		}
 		stats.TotalBlocks++
-		stats.OnlineBlocks++ // 在所有区块中计数（生产：基于实际在线检测）
+		if app.isOnline != nil && !app.isOnline(block.Address) {
+			continue
+		}
+		stats.OnlineBlocks++
 	}
 }
 
@@ -420,11 +428,21 @@ func (app *NekoApp) BanNode(chainID, reason, bannedBy string, duration time.Dura
 }
 
 // RecordGameTx 三路分账: 作者所有权 + 服务器运营 + 基础设施
-func (app *NekoApp) RecordGameTx(gameID, serverAddr string, feeAmount uint64) {
+// txType 为 "game_tx" 时，customData 会转发给 GameStateMachine.Apply()
+func (app *NekoApp) RecordGameTx(gameID, serverAddr, txType string, feeAmount uint64, customData []byte) {
 	app.gamesMu.Lock()
 	game, ok := app.gameRegistry[gameID]
+	engine := app.gameEngines[gameID]
 	app.gamesMu.Unlock()
 	if !ok || feeAmount == 0 { return }
+
+	// 向游戏状态机转发自定义数据
+	if txType == "game_tx" && engine != nil && len(customData) > 0 {
+		var action state.Action
+		if err := json.Unmarshal(customData, &action); err == nil {
+			engine.Apply(action)
+		}
+	}
 
 	// 安全计算分账 (防止溢出)
 	authorFee := feeAmount * game.AuthorShare / 100
@@ -472,6 +490,11 @@ func (app *NekoApp) RegisterGame(gameID, author, name string, feeRate, authorSha
 		PoolShare: 100 - authorShare - serverShare,
 		Status: 0, CreatedAt: time.Now().Unix(),
 	}
+
+	if _, exists := app.gameEngines[gameID]; !exists {
+		app.gameEngines[gameID] = state.NewGameStateMachine(gameID, nil)
+	}
+
 	log.Printf("[game] 新游戏: %s 作者=%x 作者:%d%% 服务器:%d%% 池:%d%%",
 		name, author[:8], authorShare, serverShare, 100-authorShare-serverShare)
 }
@@ -490,6 +513,13 @@ func (app *NekoApp) BindGameServer(nodeID, gameID string) {
 		app.BrightChainKeeper.UpdateUserBlock(block)
 	}
 	log.Printf("[game] 服务器绑定: %x → 游戏 %s", nodeID[:8], gameID)
+}
+
+// GetGameEngine 返回指定游戏的 GameStateMachine 实例。
+func (app *NekoApp) GetGameEngine(gameID string) *state.GameStateMachine {
+	app.gamesMu.Lock()
+	defer app.gamesMu.Unlock()
+	return app.gameEngines[gameID]
 }
 
 // GetGames 返回所有已注册游戏
@@ -522,6 +552,11 @@ func (app *NekoApp) Name() string { return "nekop2p" }
 
 // Height 返回当前区块高度。
 func (app *NekoApp) Height() int64 { return app.currentHeight }
+
+// SetOnlineChecker 注入在线检测回调（由节点层在 p2p 启动后调用）。
+func (app *NekoApp) SetOnlineChecker(fn func(chainID string) bool) {
+	app.isOnline = fn
+}
 
 // Shutdown 优雅关闭应用，持久化最终状态。
 func (app *NekoApp) Shutdown() {

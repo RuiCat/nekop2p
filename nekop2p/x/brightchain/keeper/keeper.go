@@ -103,7 +103,7 @@ func (k *Keeper) RegisterUser(ctx types.Context, msg *types.MsgRegister) (*types
 	if len(msg.ZkIdentityProof) > 0 && k.zkVerifier != nil {
 		// 构造身份电路赋值（公开输入: MySendPK）
 		// 注意: 链上验证只需要公共输入，秘密输入（担保人信息）由证明生成者提供
-		identityAssignment := zk.NewIdentityAssignment(msg.SendPk)
+		identityAssignment := zk.NewIdentityAssignment(msg.SendPk, 0, 0)
 		if err := k.zkVerifier.VerifyIdentityProof(msg.ZkIdentityProof, identityAssignment); err != nil {
 			return nil, fmt.Errorf("zk identity proof invalid: %w", err)
 		}

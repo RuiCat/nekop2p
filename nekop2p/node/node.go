@@ -24,6 +24,7 @@ package node
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -191,8 +192,8 @@ func (n *Node) State() string {
 func (n *Node) ChainID() [32]byte { return n.cfg.ChainID }
 
 // AddCoreFriend 向拓扑中添加一个好友并返回条目。
-func (n *Node) AddCoreFriend(chainID peer.ChainID, recvPK, sendPK [32]byte) {
-	n.topology.AddCoreFriend(chainID, recvPK, sendPK)
+func (n *Node) AddCoreFriend(chainID peer.ChainID, recvPK, sendPK [32]byte, ipv6 [16]byte, port uint16) {
+	n.topology.AddCoreFriend(chainID, recvPK, sendPK, ipv6, port)
 }
 
 // Friends 返回带有在线状态的好友列表。
@@ -376,6 +377,7 @@ func (n *Node) limboSequence() {
 func (n *Node) buildBeaconPacket() (*beaconPkt, [32]byte, error) {
 	params := &beacon.BuildParams{
 		SenderChainID: n.cfg.ChainID,
+		SenderIPv6:    n.getOurIPv6(),
 		SenderPort:    9070,
 	}
 	copy(params.SendPrivKey[:], n.cfg.SendKey.Private[:])
@@ -924,7 +926,7 @@ func (n *Node) udpBeaconLoop() {
 }
 
 // handleBeaconResponse 处理收到的 UDP 信标响应。
-// 完整验证链：KEM解密 → 签名验证 → Nonce匹配 → 时间戳检查
+// 完整验证链：KEM解密 → Nonce O(1)查找 → 签名验证 → 时间戳检查
 func (n *Node) handleBeaconResponse(data []byte, remoteAddr *net.UDPAddr) {
 	if len(data) < 32+44 { // chain_id(32) + KEM_overhead(44)
 		return
@@ -941,40 +943,40 @@ func (n *Node) handleBeaconResponse(data []byte, remoteAddr *net.UDPAddr) {
 		return
 	}
 
-	// 需要一个待验证的 nonce：尝试所有未过期的 nonce
-	// 注意：信标响应中应携带 nonce 或可推导的 nonce。当前实现暂时
-	// 对每个 pending nonce 尝试验证（除非 beacon.VerifyResponse 中有
-	// 精确 nonce 校验）。TODO: 在响应格式中添加显式的 nonce 字段。
-	n.mu.RLock()
-	var nonceCandidates [][32]byte
-	for nonce, exp := range n.pendingNonces {
-		if time.Now().Before(exp) {
-			nonceCandidates = append(nonceCandidates, nonce)
-		}
-	}
-	n.mu.RUnlock()
-	if len(nonceCandidates) == 0 {
+	// 解密响应载荷，提取 nonce（O(1) 而非遍历所有 pending nonce）
+	raw, err := beacon.DecryptResponsePayload(encPayload, &n.cfg.RecvKey.Private)
+	if err != nil {
 		return
 	}
 
-	// 对每个候选 nonce 尝试验证
-	for _, candidate := range nonceCandidates {
-		inner, err := beacon.VerifyResponse(encPayload, &n.cfg.RecvKey.Private,
-			&senderFriend.SendPK, candidate)
-		_ = inner
-		if err == nil {
-			// 验证成功：标记好友在线并从 pendingNonces 中移除已使用的 nonce
-			n.mu.Lock()
-			delete(n.pendingNonces, candidate)
-			n.mu.Unlock()
+	// O(1) 查找：直接用解密得到的 nonce 在 pendingNonces 中查找
+	n.mu.Lock()
+	_, exists := n.pendingNonces[raw.BeaconNonce]
+	if exists {
+		delete(n.pendingNonces, raw.BeaconNonce)
+	}
+	n.mu.Unlock()
 
-			n.topology.MarkOnline(senderChainID)
-			select {
-			case n.peerAddedCh <- struct{}{}:
-			default:
-			}
-			return
-		}
+	if !exists {
+		return // nonce 不在待验证列表中（已过期或伪造）
+	}
+
+	// 验证签名: 使用好友的 send_pk 验证
+	if !ed25519.Verify(senderFriend.SendPK[:], raw.SignedData, raw.Signature) {
+		return
+	}
+
+	// 验证时间戳（5 分钟窗口）
+	ts := time.Unix(raw.Timestamp, 0)
+	if time.Since(ts) > 5*time.Minute || time.Since(ts) < -5*time.Minute {
+		return
+	}
+
+	// 验证成功：标记好友在线
+	n.topology.MarkOnline(senderChainID)
+	select {
+	case n.peerAddedCh <- struct{}{}:
+	default:
 	}
 }
 

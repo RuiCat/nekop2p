@@ -19,6 +19,10 @@ func cryptoRandIntn(max int) int {
 	return int(n.Int64())
 }
 
+func nodeKey(h Hop) string {
+	return string(h.ChainID[:])
+}
+
 // PathSelector 使用节点本地拓扑选择洋葱路径。
 type PathSelector struct {
 	coreFriends []Hop

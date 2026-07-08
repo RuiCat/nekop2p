@@ -54,9 +54,10 @@ func (app *NekoApp) RunChain(cfg ChainConfig) {
 // processBlock 处理一个区块。
 func (app *NekoApp) processBlock(event consensus.BlockEvent) {
 	startTime := time.Now()
+	ctx := struct{}{}
 
 	// 1. BeginBlock
-	app.BeginBlocker(nil)
+	app.BeginBlocker(ctx)
 
 	// 2. 从 MemPool 取出交易并执行
 	txs := app.mempool.Drain(100)
@@ -71,13 +72,13 @@ func (app *NekoApp) processBlock(event consensus.BlockEvent) {
 	}
 
 	// 3. EndBlock
-	app.EndBlocker(nil)
+	app.EndBlocker(ctx)
 
 	elapsed := time.Since(startTime)
 	if app.currentHeight <= 5 || app.currentHeight%100 == 0 || elapsed > 100*time.Millisecond {
 		log.Printf("[chain] 区块 #%d | 交易: %d | 耗时: %v | 用户: %d | 贷款: %d",
 			app.currentHeight, len(txs), elapsed,
-			len(app.BrightChainKeeper.GetAllUsers(nil)),
+			len(app.BrightChainKeeper.GetAllUsers(ctx)),
 			len(app.DarkChainKeeper.GetAllLoans()))
 	}
 }
@@ -154,7 +155,7 @@ func (app *NekoApp) executeTx(tx *Tx) {
 				log.Printf("[chain] loan approve failed: %v", err)
 			}
 		}
-	case "game_tx":
+		case "game_tx":
 		// 游戏交易: Data = game_id_len(1) + game_id(N) + server_addr(32) + fee(4) + custom_data
 		if len(tx.Data) >= 38 {
 			idLen := int(tx.Data[0])
@@ -167,7 +168,9 @@ func (app *NekoApp) executeTx(tx *Tx) {
 			offset += 32
 			fee := uint64(tx.Data[offset])<<24 | uint64(tx.Data[offset+1])<<16 |
 				uint64(tx.Data[offset+2])<<8 | uint64(tx.Data[offset+3])
-			app.RecordGameTx(gameID, serverAddr, fee)
+			offset += 4
+			customData := tx.Data[offset:]
+			app.RecordGameTx(gameID, serverAddr, "game_tx", fee, customData)
 		}
 	case "register_game":
 		// 注册新游戏: game_id_len(1) + game_id(N) + author(32) + fee_rate(2) + author_share(1) + server_share(1) + name
@@ -222,10 +225,11 @@ func generateTxID(data []byte) string {
 
 // RunOnce 手动执行一个区块（用于测试或单步调试），包含交易处理。
 func (app *NekoApp) RunOnce() {
-	app.BeginBlocker(nil)
+	ctx := struct{}{}
+	app.BeginBlocker(ctx)
 	txs := app.mempool.Drain(100)
 	for _, tx := range txs {
 		app.executeTx(tx)
 	}
-	app.EndBlocker(nil)
+	app.EndBlocker(ctx)
 }

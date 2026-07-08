@@ -241,8 +241,6 @@ func generateReceiptID(source, target [32]byte, epoch uint64) [32]byte {
 	h.Write(source[:])
 	h.Write(target[:])
 	h.Write(uint64ToBytes(epoch))
-	// 添加时间戳纳秒保证唯一性
-	h.Write(uint64ToBytes(uint64(time.Now().UnixNano())))
 	var result [32]byte
 	copy(result[:], h.Sum(nil))
 	return result

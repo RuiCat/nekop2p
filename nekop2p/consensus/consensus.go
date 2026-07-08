@@ -5,6 +5,7 @@
 package consensus
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"sync"
 	"time"
@@ -108,7 +109,11 @@ func (e *SimpleEngine) ProposeBlock(txs [][]byte) ([]byte, int64, error) {
 	e.height++
 	h := e.height
 	e.mu.Unlock()
-	return nil, h, nil
+	blockData := FlattenTxs(txs)
+	if blockData == nil {
+		blockData = []byte(fmt.Sprintf("block-%d", h))
+	}
+	return blockData, h, nil
 }
 
 func (e *SimpleEngine) CommitBlock(blockData []byte, height int64) error {
@@ -136,8 +141,29 @@ func (e *SimpleEngine) loop() {
 		case <-e.stopCh:
 			return
 		case <-ticker.C:
-			_, height, _ := e.ProposeBlock(nil)
-			e.CommitBlock(nil, height)
+			blockData, height, _ := e.ProposeBlock(nil)
+			e.CommitBlock(blockData, height)
 		}
 	}
+}
+
+// FlattenTxs 将多笔交易拼接为单段区块数据。
+func FlattenTxs(txs [][]byte) []byte {
+	var result []byte
+	for _, tx := range txs {
+		result = append(result, tx...)
+	}
+	return result
+}
+
+// ComputeBlockHash 计算区块的 SHA-256 哈希。
+func ComputeBlockHash(txs [][]byte, height int64) [32]byte {
+	h := sha256.New()
+	for _, tx := range txs {
+		h.Write(tx)
+	}
+	h.Write([]byte(fmt.Sprintf("%d", height)))
+	var result [32]byte
+	copy(result[:], h.Sum(nil))
+	return result
 }

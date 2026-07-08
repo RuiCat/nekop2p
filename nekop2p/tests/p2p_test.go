@@ -25,8 +25,8 @@ func TestP2PCommunication(t *testing.T) {
 	alice, _ := node.New(aliceCfg)
 	defer alice.Shutdown()
 
-	bob.AddCoreFriend(aliceCID, aliceKeys.RecvKey.Public, aliceKeys.SendKey.Public)
-	alice.AddCoreFriend(bobCID, bobKeys.RecvKey.Public, bobKeys.SendKey.Public)
+	bob.AddCoreFriend(aliceCID, aliceKeys.RecvKey.Public, aliceKeys.SendKey.Public, [16]byte{}, 0)
+	alice.AddCoreFriend(bobCID, bobKeys.RecvKey.Public, bobKeys.SendKey.Public, [16]byte{}, 0)
 
 	if len(bob.Friends()) != 1 || len(alice.Friends()) != 1 {
 		t.Error("should each have 1 friend")
