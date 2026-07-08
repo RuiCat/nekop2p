@@ -16,8 +16,9 @@ func TestGenerateParams(t *testing.T) {
 	lSeed[0] = 0xBB
 
 	now := time.Now()
+	var zeroAnon [32]byte
 
-	params, err := inkwell.GenerateParams(loanID, 10000, bSeed, lSeed, now)
+	params, err := inkwell.GenerateParams(loanID, 10000, bSeed, lSeed, now, zeroAnon)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -47,11 +48,11 @@ func TestGenerateParams(t *testing.T) {
 
 func TestDeterministicGeneration(t *testing.T) {
 	var loanID [32]byte
-	var bSeed, lSeed [32]byte
+	var bSeed, lSeed, zeroAnon [32]byte
 
 	now := time.Now()
-	p1, _ := inkwell.GenerateParams(loanID, 5000, bSeed, lSeed, now)
-	p2, _ := inkwell.GenerateParams(loanID, 5000, bSeed, lSeed, now)
+	p1, _ := inkwell.GenerateParams(loanID, 5000, bSeed, lSeed, now, zeroAnon)
+	p2, _ := inkwell.GenerateParams(loanID, 5000, bSeed, lSeed, now, zeroAnon)
 
 	// 相同输入 → 相同输出
 	if p1.FragmentCount != p2.FragmentCount {
@@ -66,13 +67,13 @@ func TestDeterministicGeneration(t *testing.T) {
 
 func TestDifferentSeedsDifferentOutput(t *testing.T) {
 	var loanID [32]byte
-	var s1, s2 [32]byte
+	var s1, s2, zeroAnon [32]byte
 	s1[0] = 0x01
 	s2[0] = 0x02
 
 	now := time.Now()
-	p1, _ := inkwell.GenerateParams(loanID, 5000, s1, s1, now)
-	p2, _ := inkwell.GenerateParams(loanID, 5000, s2, s2, now)
+	p1, _ := inkwell.GenerateParams(loanID, 5000, s1, s1, now, zeroAnon)
+	p2, _ := inkwell.GenerateParams(loanID, 5000, s2, s2, now, zeroAnon)
 
 	// 不同种子应该（几乎肯定）产生不同的分片
 	same := true
@@ -89,9 +90,9 @@ func TestDifferentSeedsDifferentOutput(t *testing.T) {
 
 func TestGeneratePlan(t *testing.T) {
 	var loanID [32]byte
-	var bSeed, lSeed [32]byte
+	var bSeed, lSeed, zeroAnon [32]byte
 
-	params, _ := inkwell.GenerateParams(loanID, 5000, bSeed, lSeed, time.Now())
+	params, _ := inkwell.GenerateParams(loanID, 5000, bSeed, lSeed, time.Now(), zeroAnon)
 	plan := params.GeneratePlan()
 
 	if len(plan) != len(params.Fragments) {
@@ -112,9 +113,9 @@ func TestGeneratePlan(t *testing.T) {
 
 func TestGetNextFragment(t *testing.T) {
 	var loanID [32]byte
-	var bSeed, lSeed [32]byte
+	var bSeed, lSeed, zeroAnon [32]byte
 
-	params, _ := inkwell.GenerateParams(loanID, 3000, bSeed, lSeed, time.Now())
+	params, _ := inkwell.GenerateParams(loanID, 3000, bSeed, lSeed, time.Now(), zeroAnon)
 
 	// 尚未支付任何分片 → 应返回最早的一个
 	fp, err := params.GetNextFragment(nil)
@@ -131,9 +132,9 @@ func TestGetNextFragment(t *testing.T) {
 
 func TestRemainingAmount(t *testing.T) {
 	var loanID [32]byte
-	var bSeed, lSeed [32]byte
+	var bSeed, lSeed, zeroAnon [32]byte
 
-	params, _ := inkwell.GenerateParams(loanID, 3000, bSeed, lSeed, time.Now())
+	params, _ := inkwell.GenerateParams(loanID, 3000, bSeed, lSeed, time.Now(), zeroAnon)
 
 	// 未支付任何分片 → 剩余 = 总额
 	remaining := params.RemainingAmount(nil)
@@ -161,10 +162,10 @@ func TestRemainingAmount(t *testing.T) {
 func TestSplitAmount(t *testing.T) {
 	// 通过 GenerateParams 间接测试
 	var loanID [32]byte
-	var bSeed, lSeed [32]byte
+	var bSeed, lSeed, zeroAnon [32]byte
 
 	for _, total := range []uint64{100, 1000, 10000, 99999} {
-		params, err := inkwell.GenerateParams(loanID, total, bSeed, lSeed, time.Now())
+		params, err := inkwell.GenerateParams(loanID, total, bSeed, lSeed, time.Now(), zeroAnon)
 		if err != nil {
 			t.Fatalf("generate %d: %v", total, err)
 		}
@@ -185,13 +186,14 @@ func TestSplitAmount(t *testing.T) {
 func TestChaosProperty(t *testing.T) {
 	// 生成大量参数并验证统计特性
 	var loanID [32]byte
+	var zeroAnon [32]byte
 
 	for i := 0; i < 100; i++ {
 		var s1, s2 [32]byte
 		s1[0] = byte(i)
 		s2[0] = byte(i + 100)
 
-		params, _ := inkwell.GenerateParams(loanID, 5000, s1, s2, time.Now())
+		params, _ := inkwell.GenerateParams(loanID, 5000, s1, s2, time.Now(), zeroAnon)
 
 		// 每个分片应该 > 0
 		for _, f := range params.Fragments {

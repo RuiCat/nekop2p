@@ -24,6 +24,7 @@ import (
 	darkchain "github.com/nekop2p/nekop2p/x/darkchain"
 	darkkeeper "github.com/nekop2p/nekop2p/x/darkchain/keeper"
 	darktypes "github.com/nekop2p/nekop2p/x/darkchain/types"
+	"github.com/nekop2p/nekop2p/x/node"
 )
 
 // NekoApp 是主链应用。
@@ -36,6 +37,9 @@ type NekoApp struct {
 
 	BrightChainModule brightchain.AppModule
 	DarkChainModule   darkchain.AppModule
+
+	NodeGovernor *node.NodeGovernor // 节点治理（黑名单/罚没/任期）
+	VRG          *VRGState          // 虚拟根网图运行时状态
 
 	currentHeight int64
 	lastSalaryPay int64
@@ -70,6 +74,7 @@ func NewNekoApp(dataDir string) (*NekoApp, error) {
 		DarkChainKeeper:    dk,
 		BrightChainModule:  brightchain.NewAppModule(bk),
 		DarkChainModule:    darkchain.NewAppModule(dk),
+		NodeGovernor:       node.NewNodeGovernor(),
 		nodePerformance:     make(map[string]*NodeStats),
 		gameRegistry:        make(map[string]*brighttypes.GameInfo),
 		gameServers:         make(map[string]string),
@@ -87,11 +92,37 @@ func NewNekoApp(dataDir string) (*NekoApp, error) {
 func (app *NekoApp) BeginBlocker(ctx brighttypes.Context) {
 	app.currentHeight++
 
+	// 0. 节点治理：检查过期任期和黑名单清理
+	app.processNodeGovernance(ctx)
+
 	// 1. 检查逾期担保金 → 处理违约
 	app.checkOverdueBonds(ctx)
 
 	// 2. 暗链：检查逾期贷款 + 推进周期
 	app.DarkChainModule.BeginBlock()
+}
+
+// processNodeGovernance 处理节点治理任务。
+func (app *NekoApp) processNodeGovernance(ctx brighttypes.Context) {
+	// 清理过期黑名单条目（每小时一次，即 ~1800 个区块）
+	if app.currentHeight%1800 == 0 {
+		cleaned := app.NodeGovernor.Blacklist.CleanExpired()
+		if cleaned > 0 {
+			log.Printf("[governance] cleaned %d expired blacklist entries", cleaned)
+		}
+	}
+
+	// 检查任期过期（每天一次，即 ~43200 个区块）
+	if app.currentHeight%43200 == 0 {
+		expired := app.NodeGovernor.TermManager.ExpiredTerms()
+		for _, term := range expired {
+			// 任期过期的正式节点降级
+			app.BrightChainKeeper.SetNodeRole(ctx, term.NodeID, brighttypes.NodeRole_NONE)
+			app.NodeGovernor.TermManager.EndTerm(term.NodeID)
+			log.Printf("[governance] node %s term expired (term %d), demoted to NONE",
+				node.FormatNodeID(term.NodeID), term.TermNumber)
+		}
+	}
 }
 
 // EndBlocker 在每个区块结束时被调用。
@@ -105,6 +136,9 @@ func (app *NekoApp) EndBlocker(ctx brighttypes.Context) {
 		app.processMonthlySalary(ctx)
 		app.lastSalaryPay = app.currentHeight
 	}
+
+	// 2.5 节点治理：罚没检查（每月）
+	app.processSlashing(ctx)
 
 	// 3. 每季度处理节点轮换/淘汰
 	blocksPerQuarter := blocksPerMonth * 3
@@ -120,6 +154,9 @@ func (app *NekoApp) EndBlocker(ctx brighttypes.Context) {
 		app.BrightChainKeeper.SetHeight(app.currentHeight)
 		app.DarkChainKeeper.SetHeight(app.currentHeight)
 	}
+
+	// 6. VRG 纪元推进（每个区块）
+	app.EpochTick(app.currentHeight)
 }
 
 // ===== 区块钩子实现 =====
@@ -181,9 +218,10 @@ func (app *NekoApp) processMonthlySalary(ctx brighttypes.Context) {
 	for _, node := range officialNodes {
 		var salary uint64
 		if node.role == brighttypes.NodeRole_OFFICIAL_RELAY && relayTotal > 0 {
-			salary = relayBudget * node.trustWeight / relayTotal
+			// 先除后乘防 uint64 溢出
+			salary = (relayBudget / relayTotal) * node.trustWeight
 		} else if recordTotal > 0 {
-			salary = recordBudget * node.trustWeight / recordTotal
+			salary = (recordBudget / recordTotal) * node.trustWeight
 		}
 		if salary > 0 {
 			app.BrightChainKeeper.CreditSalary(ctx, node.chainID, salary)
@@ -238,13 +276,16 @@ func (app *NekoApp) processQuarterlyRotation(ctx brighttypes.Context) {
 	sort.Slice(nonOfficials, func(i, j int) bool { return nonOfficials[i].score > nonOfficials[j].score })
 
 	// 末位 10% 降级
+	var demoteCount int
 	if len(officials) >= 10 {
-		demoteCount := len(officials) / 10
+		demoteCount = len(officials) / 10
 		if demoteCount < 1 {
 			demoteCount = 1
 		}
 		for i := len(officials) - demoteCount; i < len(officials); i++ {
 			app.BrightChainKeeper.SetNodeRole(ctx, officials[i].chainID, brighttypes.NodeRole_NONE)
+			// 结束任期
+			app.NodeGovernor.TermManager.EndTerm(officials[i].chainID)
 		}
 	}
 
@@ -255,7 +296,21 @@ func (app *NekoApp) processQuarterlyRotation(ctx brighttypes.Context) {
 			promoteCount = 1
 		}
 		for i := 0; i < promoteCount && i < len(nonOfficials); i++ {
-			app.BrightChainKeeper.SetNodeRole(ctx, nonOfficials[i].chainID, brighttypes.NodeRole_OFFICIAL_RELAY)
+			nodeID := nonOfficials[i].chainID
+			// 检查黑名单：被封禁节点不能升级
+			if app.IsNodeBanned(nodeID) {
+				continue
+			}
+			// 检查是否可以连任
+			if !app.NodeGovernor.TermManager.CanRenew(nodeID) {
+				log.Printf("[governance] node %s cannot renew (max consecutive terms reached)", node.FormatNodeID(nodeID))
+				continue
+			}
+			app.BrightChainKeeper.SetNodeRole(ctx, nodeID, brighttypes.NodeRole_OFFICIAL_RELAY)
+			app.NodeGovernor.TermManager.StartTerm(nodeID, "relay")
+			log.Printf("[governance] promoted node %s to OFFICIAL_RELAY (term %d)",
+				node.FormatNodeID(nodeID),
+				app.NodeGovernor.TermManager.GetCurrentTerm(nodeID).TermNumber)
 		}
 	}
 
@@ -297,6 +352,71 @@ func (app *NekoApp) RecordRelay(chainID string, count uint64) {
 		app.nodePerformance[chainID] = stats
 	}
 	stats.RelayCount += count
+}
+
+// processSlashing 处理节点罚没检查（每月执行一次）。
+func (app *NekoApp) processSlashing(ctx brighttypes.Context) {
+	users := app.BrightChainKeeper.GetAllUsers(ctx)
+	for _, block := range users {
+		if block.NodeRole != brighttypes.NodeRole_OFFICIAL_RELAY &&
+			block.NodeRole != brighttypes.NodeRole_OFFICIAL_RECORD {
+			continue
+		}
+
+		// 计算节点评分
+		app.npMu.Lock()
+		stats := app.nodePerformance[block.Address]
+		app.npMu.Unlock()
+
+		onlineRate := float64(0.5)
+		relayScore := uint64(0)
+		if stats != nil && stats.TotalBlocks > 0 {
+			onlineRate = float64(stats.OnlineBlocks) / float64(stats.TotalBlocks)
+			relayScore = stats.RelayCount
+		}
+		score := uint64(float64(block.TrustWeight)*0.4 +
+			onlineRate*float64(block.TrustWeight)*0.3 +
+			float64(relayScore)*0.3)
+
+		// 检查是否应罚没
+		shouldSlash, slashAmount := app.NodeGovernor.Slashing.RecordPerformance(
+			block.Address, score, block.CreditLimit,
+		)
+
+		if shouldSlash && slashAmount > 0 {
+			// 执行罚没：减少 CreditLimit
+			if block.CreditLimit >= slashAmount {
+				block.CreditLimit -= slashAmount
+			} else {
+				block.CreditLimit = 0
+			}
+			block.TrustWeight = block.TrustWeight * 9 / 10 // 罚没伴随信任降低
+			app.BrightChainKeeper.UpdateUserBlock(block)
+
+			// 将罚没金额转入坏账准备金
+			pool := app.BrightChainKeeper.GetPool(ctx)
+			pool.BadDebtReserve += slashAmount
+			pool.TotalBalance += slashAmount
+			app.BrightChainKeeper.SetPool(pool)
+
+			log.Printf("[governance] slashed node %s: -%d credit (score=%d, consecutive=%d)",
+				node.FormatNodeID(block.Address), slashAmount, score,
+				app.NodeGovernor.Slashing.GetState(block.Address).ConsecutiveLowPerfCount)
+		}
+	}
+}
+
+// IsNodeBanned 检查节点是否在黑名单中。
+func (app *NekoApp) IsNodeBanned(chainID string) bool {
+	return app.NodeGovernor.Blacklist.IsBanned(chainID)
+}
+
+// BanNode 将节点加入黑名单。
+func (app *NekoApp) BanNode(chainID, reason, bannedBy string, duration time.Duration) {
+	app.NodeGovernor.Blacklist.Ban(chainID, reason, bannedBy, duration)
+	// 同时撤销正式节点角色
+	app.BrightChainKeeper.SetNodeRole(nil, chainID, brighttypes.NodeRole_NONE)
+	log.Printf("[governance] banned node %s: %s (duration=%v)", node.FormatNodeID(chainID), reason, duration)
 }
 
 // RecordGameTx 三路分账: 作者所有权 + 服务器运营 + 基础设施

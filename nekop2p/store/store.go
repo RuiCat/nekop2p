@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,6 +24,7 @@ var (
 	bucketLoans      = []byte("loans")       // 暗链贷款
 	bucketNullifiers = []byte("nullifiers")  // 信用票据 nullifier
 	bucketPool       = []byte("pool")        // 资金池
+	bucketCredits    = []byte("credits")      // 信用票据承诺（Merkle树叶子）
 )
 
 // ChainStore 是 BoltDB 支持的链上存储。
@@ -40,20 +42,32 @@ func New(dataDir string) (*ChainStore, error) {
 	path := filepath.Join(dataDir, "chain.db")
 	lockPath := path + ".lock"
 
-	// 尝试打开，失败则删除重建
+	// 尝试打开，根据错误类型处理
 	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
-		os.Remove(path)
-		os.Remove(lockPath)
-		db, err = bolt.Open(path, 0600, &bolt.Options{Timeout: 1 * time.Second})
-		if err != nil {
-			return nil, fmt.Errorf("store: open db: %w", err)
+		// 超时 = 锁争用 → 仅删除锁文件，保留数据库
+		if os.IsTimeout(err) {
+			log.Printf("[store] lock timeout, removing stale lock: %s", lockPath)
+			os.Remove(lockPath)
+			db, err = bolt.Open(path, 0600, &bolt.Options{Timeout: 5 * time.Second})
+			if err != nil {
+				return nil, fmt.Errorf("store: open db after lock cleanup: %w", err)
+			}
+		} else {
+			// 其他错误（文件损坏等）→ 记录并尝试恢复
+			log.Printf("[store] db open failed: %v — attempting recovery", err)
+			os.Remove(path)
+			os.Remove(lockPath)
+			db, err = bolt.Open(path, 0600, &bolt.Options{Timeout: 1 * time.Second})
+			if err != nil {
+				return nil, fmt.Errorf("store: open db after recovery: %w", err)
+			}
 		}
 	}
 
 	// 创建所有 bucket
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, name := range [][]byte{bucketMeta, bucketUsers, bucketBonds, bucketLoans, bucketNullifiers, bucketPool} {
+		for _, name := range [][]byte{bucketMeta, bucketUsers, bucketBonds, bucketLoans, bucketNullifiers, bucketPool, bucketCredits} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return fmt.Errorf("create bucket %s: %w", name, err)
 			}
@@ -181,6 +195,30 @@ func (tx *Tx) PutNullifier(key string) error {
 
 func (tx *Tx) HasNullifier(key string) bool {
 	return tx.btx.Bucket(bucketNullifiers).Get([]byte(key)) != nil
+}
+
+// ===== 信用票据承诺 (Merkle 树叶子) =====
+
+// PutCreditCommitment 添加信用票据承诺。
+func (tx *Tx) PutCreditCommitment(key string, data []byte) error {
+	return tx.btx.Bucket(bucketCredits).Put([]byte(key), data)
+}
+
+// GetCreditCommitment 获取信用票据承诺。
+func (tx *Tx) GetCreditCommitment(key string) []byte {
+	return tx.btx.Bucket(bucketCredits).Get([]byte(key))
+}
+
+// DeleteCreditCommitment 删除信用票据承诺。
+func (tx *Tx) DeleteCreditCommitment(key string) error {
+	return tx.btx.Bucket(bucketCredits).Delete([]byte(key))
+}
+
+// ForEachCreditCommitment 遍历所有信用票据承诺。
+func (tx *Tx) ForEachCreditCommitment(fn func(key string, data []byte) error) error {
+	return tx.btx.Bucket(bucketCredits).ForEach(func(k, v []byte) error {
+		return fn(string(k), v)
+	})
 }
 
 // ===== 资金池 =====

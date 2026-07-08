@@ -10,20 +10,55 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
+	"log"
 
 	"github.com/nekop2p/nekop2p/store"
 	"github.com/nekop2p/nekop2p/x/brightchain/types"
+	zk "github.com/nekop2p/nekop2p/x/zk"
 )
 
 // Keeper 管理明链模块的状态（BoltDB 持久化）。
 type Keeper struct {
-	store    *store.ChainStore
-	storeKey string
+	store        *store.ChainStore
+	storeKey     string
+	zkVerifier   *zk.Verifier        // ZK 证明验证器
+	recourse     *RecourseManager     // 延期追偿管理器
+	economy      *EconomyGovernor     // 经济参数治理器
+	shadowClaims *ShadowClaimManager  // 影子凭证管理器
 }
 
 // NewKeeper 创建新的明链 Keeper。
 func NewKeeper(s *store.ChainStore, storeKey string) *Keeper {
-	return &Keeper{store: s, storeKey: storeKey}
+	return &Keeper{
+		store:        s,
+		storeKey:     storeKey,
+		recourse:     NewRecourseManager(DefaultEpochConfig()),
+		economy:      NewEconomyGovernor(DefaultEconomyParams()),
+		shadowClaims: NewShadowClaimManager(),
+	}
+}
+
+// initEconomyGovernor 延迟初始化经济治理器（防御性，已在 NewKeeper 中初始化）。
+func (k *Keeper) initEconomyGovernor() {
+	if k.economy == nil {
+		k.economy = NewEconomyGovernor(DefaultEconomyParams())
+	}
+}
+
+// RecourseManager 返回延期追偿管理器。
+func (k *Keeper) RecourseManager() *RecourseManager {
+	return k.recourse
+}
+
+// SetZkVerifier 设置 ZK 证明验证器。
+// 应在初始化时调用，在加载验证密钥之后。
+func (k *Keeper) SetZkVerifier(v *zk.Verifier) {
+	k.zkVerifier = v
+}
+
+// ZkVerifier 返回当前的 ZK 验证器（可能为 nil）。
+func (k *Keeper) ZkVerifier() *zk.Verifier {
+	return k.zkVerifier
 }
 
 // ===== UserBlock =====
@@ -62,6 +97,17 @@ func (k *Keeper) RegisterUser(ctx types.Context, msg *types.MsgRegister) (*types
 	})
 	if exists {
 		return nil, fmt.Errorf("user already registered: %x", chainID[:8])
+	}
+
+	// ===== ZK 身份证明验证 =====
+	if len(msg.ZkIdentityProof) > 0 && k.zkVerifier != nil {
+		// 构造身份电路赋值（公开输入: MySendPK）
+		// 注意: 链上验证只需要公共输入，秘密输入（担保人信息）由证明生成者提供
+		identityAssignment := zk.NewIdentityAssignment(msg.SendPk)
+		if err := k.zkVerifier.VerifyIdentityProof(msg.ZkIdentityProof, identityAssignment); err != nil {
+			return nil, fmt.Errorf("zk identity proof invalid: %w", err)
+		}
+		log.Printf("[brightchain] zk identity proof verified for %x", chainID[:8])
 	}
 
 	// ===== 邀请凭证验证 =====
@@ -124,7 +170,7 @@ func (k *Keeper) GetUserBlock(ctx types.Context, id types.ChainID) *types.UserBl
 	k.store.Read(func(tx *store.Tx) error {
 		data := tx.GetUser(string(id[:]))
 		if data != nil {
-			store.Unmarshal(data, &result)
+			mustUnmarshal(data, &result)
 			if result != nil {
 				result.Address = id.String() // 从 key 恢复 Address
 			}
@@ -196,7 +242,7 @@ func (k *Keeper) GetBond(ctx types.Context, bondID string) *types.GuaranteeBond 
 	k.store.Read(func(tx *store.Tx) error {
 		data := tx.GetBond(bondID)
 		if data != nil {
-			store.Unmarshal(data, &result)
+			store.HybridUnmarshal(data, &result)
 		}
 		return nil
 	})
@@ -228,7 +274,7 @@ func (k *Keeper) ListBonds(ctx types.Context) []*types.GuaranteeBond {
 	k.store.Read(func(tx *store.Tx) error {
 		return tx.ForEachBond(func(_ string, data []byte) error {
 			var b types.GuaranteeBond
-			if store.Unmarshal(data, &b) == nil {
+			if store.HybridUnmarshal(data, &b) == nil {
 				result = append(result, &b)
 			}
 			return nil
@@ -246,7 +292,7 @@ func (k *Keeper) GetPool(ctx types.Context) *types.Pool {
 	k.store.Read(func(tx *store.Tx) error {
 		data := tx.GetPool()
 		if data != nil {
-			store.Unmarshal(data, pool)
+			store.HybridUnmarshal(data, pool)
 		}
 		return nil
 	})
@@ -315,7 +361,7 @@ func (k *Keeper) GetAllUsers(ctx types.Context) []*types.UserBlock {
 	k.store.Read(func(tx *store.Tx) error {
 		return tx.ForEachUser(func(key string, data []byte) error {
 			var u types.UserBlock
-			if store.Unmarshal(data, &u) == nil {
+			if store.HybridUnmarshal(data, &u) == nil {
 				u.Address = key // 从 key 恢复 Address
 				result = append(result, &u)
 			}
@@ -327,7 +373,10 @@ func (k *Keeper) GetAllUsers(ctx types.Context) []*types.UserBlock {
 
 // ===== 信任权重 =====
 
+// RecalculateTrustWeights 重新计算信任权重（含硬上限防溢出）。
 func (k *Keeper) RecalculateTrustWeights(ctx types.Context) {
+	const maxTrustWeight uint64 = 1_000_000_000 // 10亿硬上限防 uint64 溢出
+
 	users := k.GetAllUsers(ctx)
 	for _, block := range users {
 		baseWeight := uint64(float64(block.TotalRepayAmount) * 0.1)
@@ -350,6 +399,9 @@ func (k *Keeper) RecalculateTrustWeights(ctx types.Context) {
 			for _, ref := range u.GuaranteedBy {
 				if g := userMap[string(ref.OtherParty)]; g != nil {
 					newW := u.TrustWeight + uint64(float64(g.TrustWeight)*0.8)
+					if newW > maxTrustWeight {
+						newW = maxTrustWeight // 硬上限防溢出
+					}
 					if newW != u.TrustWeight {
 						u.TrustWeight = newW
 						changed = true
@@ -371,9 +423,119 @@ func (k *Keeper) RecalculateTrustWeights(ctx types.Context) {
 	}
 }
 
-// ===== 递归追偿 =====
+// ===== 递归追偿（延期准备金版本）=====
 
-func (k *Keeper) ProcessRecursiveLiability(ctx types.Context, defaulterAddr string, debtAmount uint64) error {
+// ProcessRecursiveLiability 处理递归追偿。
+// 使用延期准备金拨备机制，将惩罚从瞬时脉冲展开为基于 Epoch 的分级递进扣除。
+//
+// 旧行为（已废弃）：瞬间全额扣除担保人 Bond
+// 新行为：InitiateProvision → 30% 首扣 → 每 Epoch 递进（70%→100%）
+func (k *Keeper) ProcessRecursiveLiability(ctx types.Context, defaulterAddr string, debtAmount uint64) (*DeferredProvision, uint64, error) {
+	defaulter := k.GetUserBlock(ctx, parseChainID(defaulterAddr))
+	if defaulter == nil {
+		return nil, 0, fmt.Errorf("user not found: %s", defaulterAddr)
+	}
+
+	// 构建担保人链
+	var guarantorChain []string
+	bonds := k.ListBonds(ctx)
+	for _, bond := range bonds {
+		if bond.Status != types.BondStatus_FORFEITED && string(bond.Invitee) == defaulterAddr {
+			guarantorChain = append(guarantorChain, string(bond.Inviter))
+		}
+	}
+
+	// 发起延期追偿
+	blockHeight := k.Height()
+	prov, initialAmount, err := k.recourse.InitiateProvision(
+		defaulterAddr,
+		debtAmount,
+		guarantorChain,
+		blockHeight,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("initiate provision: %w", err)
+	}
+
+	// 即时扣除首笔金额（30%）
+	if initialAmount > 0 {
+		if err := k.applyProvisionDeduction(ctx, defaulterAddr, initialAmount); err != nil {
+			return prov, initialAmount, fmt.Errorf("apply initial deduction: %w", err)
+		}
+	}
+
+	log.Printf("[recourse] deferred provision for %s: debt=%d initial_deduct=%d remaining=%d epoch=%d",
+		defaulterAddr[:8], debtAmount, initialAmount, prov.RemainingAmount,
+		k.recourse.CurrentEpoch())
+
+	return prov, initialAmount, nil
+}
+
+// ProcessEpochProvisions 处理所有活跃追偿的 Epoch 递进扣除。
+// 应在 EndBlocker 中每 Epoch 调用一次。
+func (k *Keeper) ProcessEpochProvisions(ctx types.Context) []ProvisionAction {
+	blockHeight := k.Height()
+	actions := k.recourse.ProcessEpochProvision(blockHeight)
+
+	for _, action := range actions {
+		k.applyProvisionDeduction(ctx, action.TargetNode, action.Amount)
+	}
+
+	return actions
+}
+
+// applyProvisionDeduction 对目标节点应用扣除。
+func (k *Keeper) applyProvisionDeduction(ctx types.Context, targetAddr string, amount uint64) error {
+	target := k.GetUserBlock(ctx, parseChainID(targetAddr))
+	if target == nil {
+		return fmt.Errorf("target not found: %s", targetAddr)
+	}
+
+	// 优先从 CreditLimit 扣除
+	if target.CreditLimit >= amount {
+		target.CreditLimit -= amount
+	} else {
+		deducted := target.CreditLimit
+		target.CreditLimit = 0
+		remaining := amount - deducted
+
+		// 防御性检查：防止 TrustWeight=0 导致除零 panic
+		if target.TrustWeight < 1 {
+			target.TrustWeight = 1
+		}
+		penalty := remaining * 10 / target.TrustWeight
+		if penalty > 100 {
+			penalty = 100
+		}
+		target.TrustWeight = target.TrustWeight * (100 - penalty) / 100
+		if target.TrustWeight < 1 {
+			target.TrustWeight = 1
+		}
+	}
+
+	return k.UpdateUserBlock(target)
+}
+
+// ProcessProvisionAppeal 处理追偿申诉。
+func (k *Keeper) ProcessProvisionAppeal(provisionID, evidence string) error {
+	blockHeight := k.Height()
+	return k.recourse.SubmitAppeal(provisionID, evidence, blockHeight)
+}
+
+// ResolveProvisionAppeal 处理申诉裁决。
+func (k *Keeper) ResolveProvisionAppeal(provisionID string, upheld bool) error {
+	return k.recourse.ResolveAppeal(provisionID, upheld)
+}
+
+// CurrentEpoch 返回当前 Epoch。
+func (k *Keeper) CurrentEpoch() int64 {
+	return k.recourse.CurrentEpoch()
+}
+
+// ===== 旧版递归追偿（保留向后兼容）=====
+
+// ProcessRecursiveLiabilityInstant 原始的即时全额追偿（已废弃，保留用于测试对比）。
+func (k *Keeper) ProcessRecursiveLiabilityInstant(ctx types.Context, defaulterAddr string, debtAmount uint64) error {
 	defaulter := k.GetUserBlock(ctx, parseChainID(defaulterAddr))
 	if defaulter == nil {
 		return fmt.Errorf("user not found: %s", defaulterAddr)
@@ -591,13 +753,18 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
-// mustMarshal JSON序列化并在失败时panic（仅用于已知结构体，JSON失败通常是编程错误）
+// mustMarshal 二进制序列化（优先 gob，回退 JSON）并在失败时 panic。
 func mustMarshal(v interface{}) []byte {
-	data, err := store.Marshal(v)
+	data, err := store.HybridMarshal(v)
 	if err != nil {
 		panic(fmt.Sprintf("brightchain: marshal failed for %T: %v", v, err))
 	}
 	return data
+}
+
+// mustUnmarshal 二进制反序列化（自动检测 gob/JSON 格式）。
+func mustUnmarshal(data []byte, v interface{}) error {
+	return store.HybridUnmarshal(data, v)
 }
 
 var _ = types.ModuleName

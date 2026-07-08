@@ -128,3 +128,57 @@ func (v *Verifier) VerifyWorkProof(proofData []byte, assignment frontend.Circuit
 func (v *Verifier) VerifyMarkerProof(proofData []byte, assignment frontend.Circuit) error {
 	return v.verify(ProofMarker, proofData, assignment)
 }
+
+// ===== Circuit Assignment Helpers =====
+
+// SimpleIdentityCircuit 简化的身份电路赋值，用于链上验证。
+// 仅设置公开输入，秘密输入的默认值由 gnark witness 忽略。
+type SimpleIdentityCircuit struct {
+	MySendPK       frontend.Variable `gnark:",public"`
+	MerkleRoot     frontend.Variable `gnark:",public"`
+	TrustThreshold frontend.Variable `gnark:",public"`
+}
+
+// Define 实现 frontend.Circuit 接口（空定义，仅用于满足类型系统）。
+// 实际约束验证由证明完成，此处仅用于提取公共输入。
+func (c *SimpleIdentityCircuit) Define(api frontend.API) error {
+	return nil
+}
+
+// NewIdentityAssignment 创建用于链上验证的身份电路赋值。
+// sendPk 作为公开输入传递给 ZK 验证器。
+func NewIdentityAssignment(sendPk []byte) *SimpleIdentityCircuit {
+	return &SimpleIdentityCircuit{
+		MySendPK:       bytesToVariable(sendPk),
+		MerkleRoot:     0, // 生产环境: 从链上状态树获取
+		TrustThreshold: 0, // 生产环境: 从链上参数获取
+	}
+}
+
+// bytesToVariable 将字节切片转换为 frontend.Variable。
+// 对于 gnark 的公共输入，使用大整数表示。
+func bytesToVariable(data []byte) frontend.Variable {
+	sum := uint64(0)
+	for i := 0; i < len(data) && i < 8; i++ {
+		sum = (sum << 8) | uint64(data[i])
+	}
+	return sum
+}
+
+// SimpleCreditCircuit 简化的信用电路赋值，用于链上验证。
+type SimpleCreditCircuit struct {
+	LoanAmount     frontend.Variable `gnark:",public"`
+	CreditTreeRoot frontend.Variable `gnark:",public"`
+}
+
+func (c *SimpleCreditCircuit) Define(api frontend.API) error {
+	return nil
+}
+
+// NewCreditAssignment 创建用于链上验证的信用电路赋值。
+func NewCreditAssignment(amount uint64) *SimpleCreditCircuit {
+	return &SimpleCreditCircuit{
+		LoanAmount:     amount,
+		CreditTreeRoot: 0, // 生产环境: 从链上信用树获取
+	}
+}

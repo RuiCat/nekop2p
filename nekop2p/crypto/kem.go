@@ -58,6 +58,7 @@ func KEMEncrypt(recipientPub *[32]byte, plaintext []byte) ([]byte, error) {
 	if aesKey == nil {
 		return nil, fmt.Errorf("KEM key derivation failed")
 	}
+	defer Memzero(aesKey) // 加密完成后清零 AES 密钥
 
 	// 4. AES-256-GCM 加密，AD = 接收方公钥
 	block, err := aes.NewCipher(aesKey)
@@ -121,6 +122,7 @@ func KEMDecrypt(recipientPriv *[32]byte, encrypted []byte) ([]byte, error) {
 	if aesKey == nil {
 		return nil, fmt.Errorf("KEM key derivation failed")
 	}
+	defer Memzero(aesKey) // 解密完成后清零 AES 密钥
 
 	// 5. GCM 解密
 	block, err := aes.NewCipher(aesKey)

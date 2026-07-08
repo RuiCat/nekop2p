@@ -84,6 +84,12 @@ func (app *NekoApp) processBlock(event consensus.BlockEvent) {
 
 // executeTx 执行一笔交易。
 func (app *NekoApp) executeTx(tx *Tx) {
+	// 黑名单检查：使用发送者 chain_id 而非交易哈希
+	if tx.SenderID != "" && app.IsNodeBanned(tx.SenderID) {
+		log.Printf("[chain] rejected tx from banned node: %s", tx.SenderID[:16])
+		return
+	}
+
 	switch tx.Type {
 	case "register":
 		if len(tx.Data) < 64 {
@@ -200,6 +206,7 @@ func (app *NekoApp) SubmitTx(txType string, data []byte) string {
 		ID:        generateTxID(data),
 		Type:      txType,
 		Data:      data,
+		SenderID:  "", // 由上层 API 设置（从认证令牌关联）
 		Status:    "pending",
 		CreatedAt: time.Now().Unix(),
 	}

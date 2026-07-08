@@ -12,6 +12,7 @@ import (
 )
 
 func newTestChain(t *testing.T) (*app.NekoApp, func()) {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "nekop2p-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
@@ -36,7 +37,8 @@ func mkKeyPair(seed byte) (recv, send []byte) {
 // ===== 场景 1: 链生命周期持久化 =====
 
 func TestChainLifecycle(t *testing.T) {
-	dir, _ := os.MkdirTemp("", "lifecycle-*")
+	dir, err := os.MkdirTemp("", "lifecycle-*")
+	if err != nil { t.Fatal(err) }
 	defer os.RemoveAll(dir)
 
 	a1, _ := app.NewNekoApp(dir)

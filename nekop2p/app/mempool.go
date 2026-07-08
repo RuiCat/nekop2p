@@ -9,6 +9,7 @@ type Tx struct {
 	ID        string // 交易哈希
 	Type      string // 交易类型: "register"/"guarantee"/"repay"/"loan"
 	Data      []byte // 序列化的交易数据
+	SenderID  string // 发送者 chain_id (用于黑名单/审计)
 	Status    string // "pending" / "confirmed" / "failed"
 	BlockNum  int64  // 确认区块号 (0=pending)
 	CreatedAt int64  // 提交时间戳

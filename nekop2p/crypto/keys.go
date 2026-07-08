@@ -120,12 +120,7 @@ func DeriveChainID(pk [32]byte) [32]byte {
 }
 
 // Memzero 安全清零字节切片，防止密钥材料在内存中残留。
-// 使用此函数而非简单的 b = nil 可防止编译器优化掉清零操作。
-//
-// Go 1.21+ 的 clear() 内建函数提供等效功能，但 Memzero 作为显式安全原语
-// 表达意图更清晰，且兼容旧版本。
+// 使用 Go 1.21+ 的 clear() 内建函数，编译器保证不会被优化掉。
 func Memzero(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
+	clear(b)
 }

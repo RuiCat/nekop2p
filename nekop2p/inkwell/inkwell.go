@@ -16,8 +16,83 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 )
+
+// RelayPathProvider 提供中继路径选择的接口。
+// 实现者应从暗链近期交易参与者中随机选择活跃的 anon_id。
+type RelayPathProvider interface {
+	// GetRecentAnonIDs 返回暗链近期活跃的匿名化名列表。
+	// limit 指定最多返回多少个候选。
+	GetRecentAnonIDs(limit int) [][32]byte
+}
+
+var (
+	relayProviderMu sync.RWMutex
+	relayProvider   RelayPathProvider
+)
+
+// SetRelayPathProvider 设置全局中继路径提供者。
+// 应在初始化时由暗链模块调用一次。
+func SetRelayPathProvider(provider RelayPathProvider) {
+	relayProviderMu.Lock()
+	defer relayProviderMu.Unlock()
+	relayProvider = provider
+}
+
+// selectRelayPath 从暗链近期活跃 anon_id 中随机选择中继路径。
+// maxHops 指定最大中继跳数（0-3），实际选择的跳数是随机的。
+// rng 用于确定性随机选择，确保借贷双方计算出相同的中继路径。
+func selectRelayPath(maxHops int, excludeAnonID [32]byte, rng *rngSource) [][32]byte {
+	if maxHops <= 0 {
+		return nil
+	}
+
+	relayProviderMu.RLock()
+	provider := relayProvider
+	relayProviderMu.RUnlock()
+
+	if provider == nil {
+		return nil // 没有提供者，直接还款
+	}
+
+	// 获取近期活跃 anon_id 候选列表
+	candidates := provider.GetRecentAnonIDs(50)
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// 过滤掉借款人自身
+	filtered := make([][32]byte, 0, len(candidates))
+	for _, c := range candidates {
+		if c != excludeAnonID {
+			filtered = append(filtered, c)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	// 实际跳数：随机选择 1 到 maxHops
+	hops := 1
+	if maxHops > 1 {
+		hops = 1 + rng.Intn(maxHops)
+	}
+	if hops > len(filtered) {
+		hops = len(filtered)
+	}
+
+	// Fisher-Yates 洗牌选择 hops 个不重复的中继节点
+	shuffled := make([][32]byte, len(filtered))
+	copy(shuffled, filtered)
+	for i := len(shuffled) - 1; i > 0; i-- {
+		j := rng.Intn(i + 1)
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	}
+
+	return shuffled[:hops]
+}
 
 // Params 保存一笔贷款的混沌结算参数。
 type Params struct {
@@ -59,7 +134,9 @@ type FragmentPlan struct {
 //
 // 注意：now 应该是双方都认可的时间戳（如贷款创建时的区块时间戳），
 // 而非本地时钟。使用本地 time.Now() 会导致双方计算出的还款窗口不一致。
-func GenerateParams(loanID [32]byte, totalAmount uint64, borrowerSeed, lenderSeed [32]byte, now time.Time) (*Params, error) {
+//
+// borrowerAnonID 用于中继路径选择时排除借款人自身。
+func GenerateParams(loanID [32]byte, totalAmount uint64, borrowerSeed, lenderSeed [32]byte, now time.Time, borrowerAnonID [32]byte) (*Params, error) {
 	// 合并种子
 	combined := make([]byte, 64)
 	copy(combined[:32], borrowerSeed[:])
@@ -81,6 +158,11 @@ func GenerateParams(loanID [32]byte, totalAmount uint64, borrowerSeed, lenderSee
 
 	// 锁 3：来源中继（30% 概率）
 	relayEnabled := rng.Intn(100) < 30
+	var relayPath [][32]byte
+	if relayEnabled {
+		// 自动选择中继路径（最多3跳，排除借款人自身）
+		relayPath = selectRelayPath(3, borrowerAnonID, rng)
+	}
 
 	params := &Params{
 		LoanID:        loanID,
@@ -91,6 +173,7 @@ func GenerateParams(loanID [32]byte, totalAmount uint64, borrowerSeed, lenderSee
 		FragmentCount: fragmentCount,
 		Fragments:     fragments,
 		RelayEnabled:  relayEnabled,
+		RelayPath:     relayPath,
 	}
 
 	return params, nil
@@ -116,12 +199,10 @@ func (p *Params) GeneratePlan() []FragmentPlan {
 			DueAfter: dueAfter,
 		}
 
-		// 如果启用了中继，从提供的中继路径中选取节点
+		// 如果启用了中继，从 GenerateParams 自动选择的中继路径中选取节点
 		if p.RelayEnabled && i < len(p.RelayPath) {
 			plan[i].RelayVia = p.RelayPath[i]
 		}
-		// 生产中：RelayPath 通过从暗链近期交易参与者中
-		// 随机选择活跃的 anon_id 来填充
 	}
 
 	return plan

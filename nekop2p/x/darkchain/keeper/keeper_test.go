@@ -10,6 +10,7 @@ import (
 )
 
 func newTestKeeper(t *testing.T) *keeper.Keeper {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "darkkeeper-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)

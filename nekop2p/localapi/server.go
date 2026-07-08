@@ -186,6 +186,7 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("/pool", s.handlePool)
 	mux.HandleFunc("/query", s.handleQuery)
 	mux.HandleFunc("/blacklist", s.handleBlacklist)
+	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/events", s.handleEvents)
 
 	s.http = &http.Server{
@@ -294,6 +295,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if r.URL.Path == "/query" && r.Method == "GET" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == "/healthz" && r.Method == "GET" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -453,6 +458,16 @@ func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 	cid := r.URL.Query().Get("chain_id")
 	result := s.cfg.OnBlacklist(action, cid)
 	json.NewEncoder(w).Encode(result)
+}
+
+// handleHealthz 健康检查端点（无需认证）。
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "ok",
+		"uptime":  time.Since(s.started).String(),
+		"version": "0.3.0",
+	})
 }
 
 // === WebSocket Handler ===

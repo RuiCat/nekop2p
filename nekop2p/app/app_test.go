@@ -8,6 +8,7 @@ import (
 )
 
 func newTestApp(t *testing.T) *app.NekoApp {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "nekop2p-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)

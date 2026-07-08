@@ -11,6 +11,7 @@ import (
 )
 
 func newTestKeeper(t *testing.T) *keeper.Keeper {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "brightkeeper-"+t.Name()+"-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
@@ -356,10 +357,12 @@ func TestProcessRecursiveLiability(t *testing.T) {
 	})
 
 	// 执行递归追偿（追偿 200，超过违约者额度）
-	err := k.ProcessRecursiveLiability(nil, dBlock.Address, 200)
-	// 预期失败：违约者只有 100 额度，担保债券为空，坏账准备金为 0
+	prov, initialAmount, err := k.ProcessRecursiveLiability(nil, dBlock.Address, 200)
+	_ = prov
+	_ = initialAmount
+	// 预期可能触发延期追偿或失败（违约者只有 100 额度）
 	if err == nil {
-		t.Log("recursive liability completed (or partial)")
+		t.Log("recursive liability initiated (deferred provision)")
 	}
 }
 

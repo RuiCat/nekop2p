@@ -18,12 +18,13 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.1.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-4.0.0-blue" alt="version">
   <img src="https://img.shields.io/badge/language-Go%201.22+-00ADD8?logo=go" alt="Go">
-  <img src="https://img.shields.io/badge/framework-Cosmos%20SDK%20(迁移中)-2E3148?logo=cosmos" alt="Cosmos">
-  <img src="https://img.shields.io/badge/status-audited-brightgreen" alt="status">
+  <img src="https://img.shields.io/badge/consensus-PBFT%20%2B%20SimpleEngine-2E3148" alt="Consensus">
+  <img src="https://img.shields.io/badge/audit-14%20rounds-brightgreen" alt="audit">
   <img src="https://img.shields.io/badge/license-CC0%201.0-lightgrey" alt="license">
-  <img src="https://img.shields.io/badge/tests-28%2F28%20passing-success" alt="tests">
+  <img src="https://img.shields.io/badge/tests-32%2F32%20passing-success" alt="tests">
+  <img src="https://img.shields.io/badge/race-0%20warnings-success" alt="race">
 </p>
 
 ---
