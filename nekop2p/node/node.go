@@ -124,6 +124,9 @@ type Node struct {
 
 	// 帧处理并发上限（每实例独立）
 	frameWorkers chan struct{}
+
+	// 区域节点共识 (Phase D)
+	regionNodes *regionNodes
 }
 
 // beaconRelayTask 表示一个待中继的信标。

@@ -56,6 +56,9 @@ type NekoApp struct {
 	gamesMu      sync.Mutex
 	gameServers  map[string]string // node_id → game_id 绑定
 	isOnline     func(chainID string) bool // 在线检测回调（由节点层注入）
+	onBlockCommitted func(height int64, hash [32]byte) // 区块提交回调
+	// 区域节点批量提交回调
+	onCommitBatches func(height int64) []interface{} // → []*region.RegionBatch
 }
 
 type NodeStats struct {
@@ -162,6 +165,14 @@ func (app *NekoApp) EndBlocker(ctx brighttypes.Context) {
 
 	// 6. VRG 纪元推进（每个区块）
 	app.EpochTick(app.currentHeight)
+
+	// 7. 区域节点批量提交到全局链 (记录层)
+	if app.onCommitBatches != nil && app.currentHeight%100 == 0 {
+		batches := app.onCommitBatches(app.currentHeight)
+		if len(batches) > 0 {
+			log.Printf("[chain] 全局链记录: %d 个区域批量提交 (height=%d)", len(batches), app.currentHeight)
+		}
+	}
 }
 
 // ===== 区块钩子实现 =====
