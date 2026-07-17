@@ -66,7 +66,8 @@ func (AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, _ client.TxEncodingCo
 }
 
 func (AppModuleBasic) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *runtime.ServeMux) {
-	// Phase 6: 注册 gRPC-Gateway 路由
+	// Phase 6: 注册 gRPC-Gateway 路由（需要 proto 生成的 pb.go 文件）
+	// types.RegisterQueryHandlerClient(context.Background(), mux, types.NewQueryClient(clientCtx))
 }
 
 // AppModule 实现 module.AppModule 接口。
