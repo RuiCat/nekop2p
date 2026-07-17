@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg 虚拟根网图 — 影子收据格式与摆渡节点协议。
 //
 // 影子收据 (Shadow Receipt):

@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg 社区虚拟化身管理 (VRG-01)。
 //
 // 社区虚拟化身 (Community Avatar):

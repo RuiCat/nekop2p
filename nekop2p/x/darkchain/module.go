@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package darkchain 实现了 Dark Chain（暗链）Cosmos SDK 模块。
 //
 // Dark Chain 是"地下银行"——匿名借贷、信用票据、

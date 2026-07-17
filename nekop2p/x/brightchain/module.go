@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package brightchain 实现明链 Cosmos SDK 模块。
 //
 // 明链是"阳光市场" — 公开、透明、假名化。

@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package store 提供基于 BoltDB 的链上持久化存储。
 //
 // 所有链上数据（用户、债券、贷款、nullifier等）通过 BoltDB 持久化。

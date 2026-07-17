@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package keeper 延期准备金拨备 (Deferred Provisioning)。
 //
 // 将递归追偿的瞬时脉冲惩罚展开为基于 Epoch 的分级递进扣除机制，

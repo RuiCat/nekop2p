@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package keeper Shadow Claims（影子凭证）二级市场实现。
 //
 // 允许 Inkwell 锁仓期间的远期债权作为可转让凭证在明域流通，

@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 
 	"cosmossdk.io/log"
+	"cosmossdk.io/store/metrics"
 	"cosmossdk.io/store/rootmulti"
 	"cosmossdk.io/store/types"
 	dbm "github.com/cosmos/cosmos-db"
@@ -65,7 +66,7 @@ func New(dataDir string) (*NekoStore, error) {
 	}
 
 	logger := log.NewNopLogger()
-	rm := rootmulti.NewStore(db, logger)
+	rm := rootmulti.NewStore(db, logger, metrics.NewNoOpMetrics())
 
 	// 挂载 IAVL 子树
 	for _, key := range allStoreKeys {
@@ -74,9 +75,7 @@ func New(dataDir string) (*NekoStore, error) {
 
 	// 加载最新版本，首次启动自动初始化
 	if err := rm.LoadLatestVersion(); err != nil {
-		if initErr := rm.LoadLatestVersion(); initErr != nil {
-			return nil, fmt.Errorf("store: load version: %w", initErr)
-		}
+		return nil, fmt.Errorf("store: load version: %w", err)
 	}
 
 	return &NekoStore{
@@ -91,9 +90,9 @@ func (ns *NekoStore) Commit() (hash []byte, version int64, err error) {
 	commitID := ns.root.LastCommitID()
 	nextVersion := commitID.Version + 1
 
-	newCID, err := ns.root.Commit(nil)
-	if err != nil {
-		return nil, 0, fmt.Errorf("store: commit: %w", err)
+	newCID := ns.root.Commit()
+	if newCID.Version != nextVersion {
+		return nil, 0, fmt.Errorf("store: expected version %d, got %d", nextVersion, newCID.Version)
 	}
 
 	return newCID.Hash, nextVersion, nil
@@ -111,7 +110,6 @@ func (ns *NekoStore) GetKVStore(key *types.KVStoreKey) types.KVStore {
 
 // GetReadOnlyStore 返回指定模块的只读 KV 存储 (已提交状态)。
 func (ns *NekoStore) GetReadOnlyStore(key *types.KVStoreKey) types.KVStore {
-	// 使用 WorkingHash 确保拿到的是当前未提交但可读的状态
 	return ns.root.GetKVStore(key)
 }
 
@@ -142,84 +140,11 @@ func (ns *NekoStore) DBPath() string {
 
 // ============================================================
 // 迁移辅助: 从旧版 BoltDB 迁移数据到 IAVL
+// (Phase 6 实现 — 需要 bbolt 导入和双构建兼容)
 // ============================================================
 
 // MigrateFromBoltDB 从旧的 BoltDB 链存储迁移数据到 IAVL 树。
-// 这是一次性操作，迁移完成后旧 BoltDB 文件可安全删除。
+// TODO(Phase 6): 实现 BoltDB → IAVL 数据迁移
 func (ns *NekoStore) MigrateFromBoltDB(boltDBPath string) error {
-	// 打开旧 BoltDB
-	boltOpts := bolt.DefaultOptions
-	boltOpts.ReadOnly = true
-	oldDB, err := bolt.Open(boltDBPath, 0400, boltOpts)
-	if err != nil {
-		return fmt.Errorf("store: open legacy bolt db: %w", err)
-	}
-	defer oldDB.Close()
-
-	// 获取 IAVL 子树
-	brightStore := ns.GetKVStore(StoreKeyBright)
-	darkStore := ns.GetKVStore(StoreKeyDark)
-
-	migratedCount := 0
-
-	err = oldDB.View(func(tx *bolt.Tx) error {
-		// 迁移 users bucket → bright store (key: "user/" + chain_id)
-		if b := tx.Bucket([]byte("users")); b != nil {
-			c := b.Cursor()
-			for k, v := c.First(); k != nil; k, v = c.Next() {
-				brightStore.Set(append([]byte("user/"), k...), v)
-				migratedCount++
-			}
-		}
-
-		// 迁移 bonds bucket → bright store (key: "bond/" + bond_id)
-		if b := tx.Bucket([]byte("bonds")); b != nil {
-			c := b.Cursor()
-			for k, v := c.First(); k != nil; k, v = c.Next() {
-				brightStore.Set(append([]byte("bond/"), k...), v)
-				migratedCount++
-			}
-		}
-
-		// 迁移 loans bucket → dark store (key: "loan/" + loan_id)
-		if b := tx.Bucket([]byte("loans")); b != nil {
-			c := b.Cursor()
-			for k, v := c.First(); k != nil; k, v = c.Next() {
-				darkStore.Set(append([]byte("loan/"), k...), v)
-				migratedCount++
-			}
-		}
-
-		// 迁移 nullifiers bucket → dark store (key: "nullifier/" + value)
-		if b := tx.Bucket([]byte("nullifiers")); b != nil {
-			c := b.Cursor()
-			for k, v := c.First(); k != nil; k, v = c.Next() {
-				darkStore.Set(append([]byte("nullifier/"), k...), v)
-				migratedCount++
-			}
-		}
-
-		// 迁移 pool bucket → bright store (key: "pool/balance")
-		if b := tx.Bucket([]byte("pool")); b != nil {
-			c := b.Cursor()
-			for k, v := c.First(); k != nil; k, v = c.Next() {
-				brightStore.Set(append([]byte("pool/"), k...), v)
-				migratedCount++
-			}
-		}
-
-		// 迁移 meta bucket → bright store (key: "meta/height")
-		if b := tx.Bucket([]byte("meta")); b != nil {
-			c := b.Cursor()
-			for k, v := c.First(); k != nil; k, v = c.Next() {
-				brightStore.Set(append([]byte("meta/"), k...), v)
-				migratedCount++
-			}
-		}
-
-		return nil
-	})
-
-	fmt.Printf("store: migrated %d entries from BoltDB to IAVL\n", migratedCount)
-	return err
+	return fmt.Errorf("store: BoltDB migration not yet implemented for Cosmos build (Phase 6)")
 }

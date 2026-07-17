@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package app Namespace ABCI 接入 + 跨链资产转移。
 //
 // E5: 将 VRG NamespaceRouter 接入链执行流程。

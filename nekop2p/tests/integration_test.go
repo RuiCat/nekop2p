@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package integration_test 端到端测试完整的信标发现流程。
 package tests
 

@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package app 提供 NekoApp — 主链应用。
 //
 // NekoApp 组合明链和暗链模块，使用 Cosmos SDK 注册它们，

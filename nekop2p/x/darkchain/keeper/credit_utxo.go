@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package keeper 信用票据 UTXO 系统。
 //
 // 实现完整的信用票据生命周期：

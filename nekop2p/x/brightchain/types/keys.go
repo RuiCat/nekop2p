@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package types 定义明链模块的类型。
 //
 // 明链 = "阳光市场" — 公开、透明、假名化。

@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 package keeper_test
 
 import (

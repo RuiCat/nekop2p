@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package keeper Shadow Claim ↔ Inkwell 集成桥接。
 //
 // 当 Inkwell 锁仓发生时自动发行影子凭证，

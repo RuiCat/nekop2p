@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package keeper 实现明链模块的状态管理。
 //
 // 使用 BoltDB 嵌入式数据库持久化所有链上状态：

@@ -20,10 +20,10 @@ func NewMsgServerImpl(keeper Keeper) types.MsgServer {
 	return &msgServer{k: keeper}
 }
 
-func (ms msgServer) RequestLoan(ctx context.Context, msg *types.MsgRequestLoan) (*types.MsgRequestLoanResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) RequestLoan(goCtx context.Context, msg *types.MsgRequestLoan) (*types.MsgRequestLoanResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	loan, err := ms.k.RequestLoan(sdkCtx, msg)
+	loan, err := ms.k.RequestLoan(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -34,10 +34,10 @@ func (ms msgServer) RequestLoan(ctx context.Context, msg *types.MsgRequestLoan) 
 	}, nil
 }
 
-func (ms msgServer) ApproveLoan(ctx context.Context, msg *types.MsgApproveLoan) (*types.MsgApproveLoanResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) ApproveLoan(goCtx context.Context, msg *types.MsgApproveLoan) (*types.MsgApproveLoanResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	loan, err := ms.k.ApproveLoan(sdkCtx, msg)
+	loan, err := ms.k.ApproveLoan(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -48,12 +48,12 @@ func (ms msgServer) ApproveLoan(ctx context.Context, msg *types.MsgApproveLoan) 
 	}, nil
 }
 
-func (ms msgServer) SettleLoan(ctx context.Context, msg *types.MsgSettleLoan) (*types.MsgSettleLoanResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) SettleLoan(goCtx context.Context, msg *types.MsgSettleLoan) (*types.MsgSettleLoanResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: 验证 ZK 还款证明
+	// Phase 4: 验证 ZK 还款证明
 
-	if err := ms.k.SettleLoan(sdkCtx, msg.LoanId); err != nil {
+	if err := ms.k.SettleLoan(ctx, msg.LoanId); err != nil {
 		return nil, err
 	}
 
@@ -72,10 +72,10 @@ func NewQueryServerImpl(keeper Keeper) types.QueryServer {
 	return &queryServer{k: keeper}
 }
 
-func (qs queryServer) Loan(ctx context.Context, req *types.QueryLoanRequest) (*types.QueryLoanResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (qs queryServer) Loan(goCtx context.Context, req *types.QueryLoanRequest) (*types.QueryLoanResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	loan, err := qs.k.GetLoan(sdkCtx, req.LoanId)
+	loan, err := qs.k.GetLoan(ctx, req.LoanId)
 	if err != nil {
 		return nil, err
 	}
@@ -83,10 +83,10 @@ func (qs queryServer) Loan(ctx context.Context, req *types.QueryLoanRequest) (*t
 	return &types.QueryLoanResponse{Loan: loan}, nil
 }
 
-func (qs queryServer) LoansByAnon(ctx context.Context, req *types.QueryLoansByAnonRequest) (*types.QueryLoansByAnonResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (qs queryServer) LoansByAnon(goCtx context.Context, req *types.QueryLoansByAnonRequest) (*types.QueryLoansByAnonResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	allLoans := qs.k.GetAllLoans(sdkCtx)
+	allLoans := qs.k.GetAllLoans(ctx)
 	var matching []*types.LoanRecord
 	for _, loan := range allLoans {
 		if string(loan.BorrowerAnon) == string(req.AnonId) ||
@@ -98,10 +98,13 @@ func (qs queryServer) LoansByAnon(ctx context.Context, req *types.QueryLoansByAn
 	return &types.QueryLoansByAnonResponse{Loans: matching}, nil
 }
 
-func (qs queryServer) Nullifier(ctx context.Context, req *types.QueryNullifierRequest) (*types.QueryNullifierResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (qs queryServer) Nullifier(goCtx context.Context, req *types.QueryNullifierRequest) (*types.QueryNullifierResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	return &types.QueryNullifierResponse{
-		IsSpent: qs.k.IsNullifierSpent(sdkCtx, req.Nullifier),
+		IsSpent: qs.k.IsNullifierSpent(ctx, req.Nullifier),
 	}, nil
 }
+
+// Silence unused import
+var _ = fmt.Sprintf

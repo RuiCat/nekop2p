@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package keeper 实现暗链模块的状态管理。
 //
 // 使用 BoltDB 持久化：贷款、nullifier、身份标记。

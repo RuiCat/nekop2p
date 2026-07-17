@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package node 提供 neko-node 的主节点编排器。
 //
 // === 状态机 ===

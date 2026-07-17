@@ -21,6 +21,53 @@ func TestServerNew(t *testing.T) {
 	}
 }
 
+func TestServerTokenIdempotent(t *testing.T) {
+	cfg := localapi.Config{
+		ListenAddr: "127.0.0.1:0",
+	}
+	srv := localapi.New(cfg)
+	t1 := srv.Token()
+	t2 := srv.Token()
+	if t1 != t2 {
+		t.Error("Token() should be idempotent")
+	}
+	if len(t1) < 16 {
+		t.Errorf("token too short: %d bytes", len(t1))
+	}
+}
+
+func TestServerStartStop(t *testing.T) {
+	cfg := localapi.Config{
+		ListenAddr: "127.0.0.1:0",
+	}
+	srv := localapi.New(cfg)
+	if err := srv.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	// 服务器应能正常停止
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+}
+
+func TestPushEvent(t *testing.T) {
+	cfg := localapi.Config{
+		ListenAddr: "127.0.0.1:0",
+	}
+	srv := localapi.New(cfg)
+	// 推送事件不应 panic
+	srv.PushEvent("test", map[string]string{"key": "value"})
+}
+
+func TestPushMessage(t *testing.T) {
+	cfg := localapi.Config{
+		ListenAddr: "127.0.0.1:0",
+	}
+	srv := localapi.New(cfg)
+	// 推送消息不应 panic
+	srv.PushMessage("from-abc", "hello world")
+}
+
 func TestStartStop(t *testing.T) {
 	cfg := localapi.Config{
 		ListenAddr: "127.0.0.1:19971",

@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package store 二进制序列化支持。
 //
 // 提供紧凑的二进制编解码，用于替换 JSON 序列化。

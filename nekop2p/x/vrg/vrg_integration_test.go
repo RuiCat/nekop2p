@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg_test VRG 持久化与端到端场景测试。
 package vrg_test
 

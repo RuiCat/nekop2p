@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    name: Build & Test
+  test-p2p:
+    name: P2P Build & Test
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -22,21 +22,52 @@ jobs:
       with:
         go-version: ${{ matrix.go-version }}
 
-    - name: Build
+    - name: Build (P2P)
       working-directory: nekop2p
       run: go build ./...
 
-    - name: Vet
+    - name: Vet (P2P)
       working-directory: nekop2p
       run: go vet ./...
 
-    - name: Test
+    - name: Test (P2P)
       working-directory: nekop2p
       run: go test -timeout 120s -count=1 ./...
 
-    - name: Race Detection
+    - name: Race Detection (P2P)
       working-directory: nekop2p
       run: go test -race -timeout 180s -count=1 ./...
+
+  test-cosmos:
+    name: Cosmos SDK Build & Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.23', '1.24']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Build (Cosmos SDK)
+      working-directory: nekop2p
+      run: go build -tags cosmos ./...
+
+    - name: Vet (Cosmos SDK)
+      working-directory: nekop2p
+      run: go vet -tags cosmos ./...
+
+    - name: Test (Cosmos SDK)
+      working-directory: nekop2p
+      run: go test -tags cosmos -timeout 120s -count=1 ./...
+
+    - name: Race Detection (Cosmos SDK)
+      working-directory: nekop2p
+      run: go test -tags cosmos -race -timeout 180s -count=1 ./...
 
   lint:
     name: Lint
@@ -51,4 +82,4 @@ jobs:
       uses: golangci/golangci-lint-action@v6
       with:
         working-directory: nekop2p
-        args: --timeout=5m
+        args: --timeout=5m --build-tags=cosmos

@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg Namespace 隔离 (VRG-05)。
 //
 // 应用级命名空间路由：每个应用分配唯一 NamespaceID，

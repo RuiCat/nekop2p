@@ -1,0 +1,39 @@
+# buf.gen.yaml — Nekop2p Proto 代码生成配置
+#
+# 使用 Buf (https://buf.build) 管理 proto 依赖和代码生成。
+#
+# 安装 buf:
+#   curl -sSL https://github.com/bufbuild/buf/releases/latest/download/buf-Linux-x86_64 -o /usr/local/bin/buf
+#   chmod +x /usr/local/bin/buf
+#
+# 生成代码:
+#   buf generate
+#
+version: v2
+
+# 依赖: cosmos-sdk proto
+# buf 会自动从 BSR (Buf Schema Registry) 拉取依赖
+deps:
+  - buf.build/cosmos/cosmos-sdk
+
+# 代码生成插件
+plugins:
+  # Go 类型
+  - local: protoc-gen-go
+    out: ..
+    opt:
+      - paths=source_relative
+
+  # gRPC 服务 (仅 local API)
+  - local: protoc-gen-go-grpc
+    out: ..
+    opt:
+      - paths=source_relative
+    strategy: directory
+    include_imports: false
+
+# 输入目录
+inputs:
+  - directory: proto
+    paths:
+      - proto/nekop2p

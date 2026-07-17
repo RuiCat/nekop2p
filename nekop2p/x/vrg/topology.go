@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg 虚拟根网图拓扑计算。
 //
 // 基于创世邀请链的 LCA (Lowest Common Ancestor) 计算任意两社区的距离。

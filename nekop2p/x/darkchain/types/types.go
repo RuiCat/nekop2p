@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 package types
 
 const ModuleName = "darkchain"

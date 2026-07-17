@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg_test 虚拟根网图集成测试。
 package vrg_test
 

@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg 全局纪元管理与双花冲突检测。
 //
 // E8: 全局纪元计数器

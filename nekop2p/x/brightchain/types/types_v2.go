@@ -1,21 +1,23 @@
 //go:build cosmos
 
-// Package types 定义明链模块的类型常量。
+// Package types 定义明链模块的类型常量（Cosmos SDK 版本）。
 //
-// Cosmos SDK 要求每个模块定义:
-//   - ModuleName (模块名称)
-//   - StoreKey (IAVL 存储键)
-//   - 事件类型和属性键
-//   - GenesisState
-//   - 接口注册
+// 本文件在 //go:build cosmos 标签下编译，提供完整的类型定义，
+// 替代非 Cosmos 模式下的 types.go + keys.go。
 //
-// Package types 提供明链类型定义。
+// 生产环境中，消息类型应由 protoc 从 .proto 文件生成。
+// 当前阶段使用手写桩类型，后续 Phase 6 迁移至 proto 生成。
 package types
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 )
 
 const (
@@ -44,13 +46,338 @@ const (
 )
 
 // ============================================================
+// 枚举类型
+// ============================================================
+
+type NodeRole int32
+
+const (
+	NodeRole_NONE            NodeRole = 0
+	NodeRole_PUBLIC          NodeRole = 1
+	NodeRole_OFFICIAL_RELAY  NodeRole = 2
+	NodeRole_OFFICIAL_RECORD NodeRole = 3
+	NodeRole_GAME_SERVER     NodeRole = 4
+)
+
+type BondStatus int32
+
+const (
+	BondStatus_ACTIVE    BondStatus = 0
+	BondStatus_RELEASED  BondStatus = 1
+	BondStatus_FORFEITED BondStatus = 2
+)
+
+// ============================================================
+// 核心数据结构
+// ============================================================
+
+// BrightAccount 是明链用户账户（Cosmos 版本）。
+// 每个用户拥有一个链上数据块，只能被自己更新。
+type BrightAccount struct {
+	Address          string          `json:"address"`
+	AccountNumber    uint64          `json:"account_number"`
+	Sequence         uint64          `json:"sequence"`
+	RecvPk           []byte          `json:"recv_pk"`
+	SendPk           []byte          `json:"send_pk"`
+	CreditScore      uint64          `json:"credit_score"`
+	TrustWeight      uint64          `json:"trust_weight"`
+	TotalRepayAmount uint64          `json:"total_repay_amount"`
+	SalaryEarnings   uint64          `json:"salary_earnings"`
+	CreditLimit      uint64          `json:"credit_limit"`
+	SeedPhase        bool            `json:"seed_phase"`
+	Guarantors       [][]byte        `json:"guarantors"`
+	NodeRole         NodeRole        `json:"node_role"`
+	NodeTermStart    int64           `json:"node_term_start"`
+	NodeTermEnd      int64           `json:"node_term_end"`
+	Friends          []*FriendRecord `json:"friends"`
+	GuaranteedOf     []*BondRef      `json:"guaranteed_of"`
+	GuaranteedBy     []*BondRef      `json:"guaranteed_by"`
+	GameEarnings     uint64          `json:"game_earnings"`
+}
+
+func (a BrightAccount) GetAddress() sdk.AccAddress {
+	return sdk.AccAddress([]byte(a.Address))
+}
+
+// FriendRecord 好友记录。
+type FriendRecord struct {
+	ChainId      []byte `json:"chain_id"`
+	RecvPk       []byte `json:"recv_pk"`
+	SendPk       []byte `json:"send_pk"`
+	TrustDist    uint32 `json:"trust_dist"`
+	AddedAt      int64  `json:"added_at"`
+	IntroducedBy []byte `json:"introduced_by"`
+}
+
+// BondRef 担保引用。
+type BondRef struct {
+	BondId     string `json:"bond_id"`
+	OtherParty []byte `json:"other_party"`
+}
+
+// GuaranteeBond 担保债券。
+type GuaranteeBond struct {
+	BondId                string     `json:"bond_id"`
+	Inviter               []byte     `json:"inviter"`
+	Invitee               []byte     `json:"invitee"`
+	LockedNoteCommitments [][]byte   `json:"locked_note_commitments"`
+	BondNotes             [][]byte   `json:"bond_notes"`
+	TotalBond             uint64     `json:"total_bond"`
+	Coefficient           uint64     `json:"coefficient"`
+	SeedLimit             uint64     `json:"seed_limit"`
+	LockPeriodDays        int64      `json:"lock_period_days"`
+	LockedAt              int64      `json:"locked_at"`
+	UnlockAt              int64      `json:"unlock_at"`
+	CreatedAt             int64      `json:"created_at"`
+	Status                BondStatus `json:"status"`
+}
+
+// Pool 资金池。
+type Pool struct {
+	TotalBalance   uint64 `json:"total_balance"`
+	SalaryRelay    uint64 `json:"salary_relay"`
+	SalaryRecord   uint64 `json:"salary_record"`
+	SeedLoanReserve uint64 `json:"seed_loan_reserve"`
+	BadDebtReserve uint64 `json:"bad_debt_reserve"`
+	Community      uint64 `json:"community"`
+	GameFees       uint64 `json:"game_fees"`
+	GameCommission uint64 `json:"game_commission"`
+}
+
+// GameInfo 游戏信息。
+type GameInfo struct {
+	GameID      string `json:"game_id"`
+	AuthorID    string `json:"author_id"`
+	Name        string `json:"name"`
+	FeeRate     uint64 `json:"fee_rate"`
+	AuthorShare uint64 `json:"author_share"`
+	ServerShare uint64 `json:"server_share"`
+	PoolShare   uint64 `json:"pool_share"`
+	Status      int32  `json:"status"`
+	CreatedAt   int64  `json:"created_at"`
+	TotalTxs    uint64 `json:"total_txs"`
+	TotalFees   uint64 `json:"total_fees"`
+}
+
+// ============================================================
+// 消息类型（手写桩 — Phase 6 迁移至 proto 生成）
+// ============================================================
+
+// MsgRegister 用户注册消息。
+type MsgRegister struct {
+	RecvPk          []byte   `json:"recv_pk"`
+	SendPk          []byte   `json:"send_pk"`
+	ZkIdentityProof []byte   `json:"zk_identity_proof"`
+	GuarantorSigs   [][]byte `json:"guarantor_sigs"`
+	Sender          string   `json:"sender"`
+}
+
+func (msg *MsgRegister) Reset()         {}
+func (msg *MsgRegister) String() string { return fmt.Sprintf("MsgRegister{sender:%s}", msg.Sender[:16]) }
+func (msg *MsgRegister) ProtoMessage()  {}
+func (msg *MsgRegister) ValidateBasic() error {
+	if len(msg.RecvPk) == 0 || len(msg.SendPk) == 0 {
+		return sdkerrors.ErrInvalidRequest.Wrap("recv_pk and send_pk required")
+	}
+	return nil
+}
+func (msg *MsgRegister) GetSigners() []sdk.AccAddress {
+	return []sdk.AccAddress{sdk.AccAddress([]byte(msg.Sender))}
+}
+
+// MsgRegisterResponse 用户注册响应。
+type MsgRegisterResponse struct {
+	ChainId  string `json:"chain_id"`
+	Sequence uint64 `json:"sequence"`
+}
+
+func (m *MsgRegisterResponse) Reset()         {}
+func (m *MsgRegisterResponse) String() string { return fmt.Sprintf("MsgRegisterResponse{chain:%s}", m.ChainId) }
+func (m *MsgRegisterResponse) ProtoMessage()  {}
+
+// MsgRepay 还款消息。
+type MsgRepay struct {
+	FromAddress  string `json:"from_address"`
+	Amount       sdk.Coin `json:"amount"`
+	ZkRepayProof []byte `json:"zk_repay_proof"`
+	InkwellRef   []byte `json:"inkwell_ref"`
+	Sender       string `json:"sender"`
+}
+
+func (msg *MsgRepay) Reset()         {}
+func (msg *MsgRepay) String() string { return fmt.Sprintf("MsgRepay{from:%s}", msg.FromAddress[:16]) }
+func (msg *MsgRepay) ProtoMessage()  {}
+func (msg *MsgRepay) ValidateBasic() error {
+	if msg.Amount.IsZero() {
+		return sdkerrors.ErrInvalidRequest.Wrap("amount required")
+	}
+	return nil
+}
+func (msg *MsgRepay) GetSigners() []sdk.AccAddress {
+	return []sdk.AccAddress{sdk.AccAddress([]byte(msg.Sender))}
+}
+
+// MsgRepayResponse 还款响应。
+type MsgRepayResponse struct {
+	Repaid uint64 `json:"repaid"`
+}
+
+func (m *MsgRepayResponse) Reset()         {}
+func (m *MsgRepayResponse) String() string { return "MsgRepayResponse" }
+func (m *MsgRepayResponse) ProtoMessage()  {}
+
+// MsgUpdateFriends 更新好友消息。
+type MsgUpdateFriends struct {
+	Sender string          `json:"sender"`
+	Add    []*FriendRecord `json:"add"`
+	Remove [][]byte        `json:"remove"`
+}
+
+func (msg *MsgUpdateFriends) Reset()         {}
+func (msg *MsgUpdateFriends) String() string { return "MsgUpdateFriends" }
+func (msg *MsgUpdateFriends) ProtoMessage()  {}
+func (msg *MsgUpdateFriends) ValidateBasic() error { return nil }
+func (msg *MsgUpdateFriends) GetSigners() []sdk.AccAddress {
+	return []sdk.AccAddress{sdk.AccAddress([]byte(msg.Sender))}
+}
+
+// MsgUpdateFriendsResponse 更新好友响应。
+type MsgUpdateFriendsResponse struct{}
+
+func (m *MsgUpdateFriendsResponse) Reset()         {}
+func (m *MsgUpdateFriendsResponse) String() string { return "MsgUpdateFriendsResponse" }
+func (m *MsgUpdateFriendsResponse) ProtoMessage()  {}
+
+// MsgGuarantee 担保消息。
+type MsgGuarantee struct {
+	Sender             string   `json:"sender"`
+	Inviter            string   `json:"inviter"`
+	Invitee            string   `json:"invitee"`
+	BondNotes          [][]byte `json:"bond_notes"`
+	BondNoteCommitments [][]byte `json:"bond_note_commitments"`
+	Coefficient        uint64   `json:"coefficient"`
+	LockPeriodDays     int64    `json:"lock_period_days"`
+	ZkLegitimate       []byte   `json:"zk_legitimate"`
+}
+
+func (msg *MsgGuarantee) Reset()         {}
+func (msg *MsgGuarantee) String() string { return "MsgGuarantee" }
+func (msg *MsgGuarantee) ProtoMessage()  {}
+func (msg *MsgGuarantee) ValidateBasic() error { return nil }
+func (msg *MsgGuarantee) GetSigners() []sdk.AccAddress {
+	return []sdk.AccAddress{sdk.AccAddress([]byte(msg.Sender))}
+}
+
+// MsgGuaranteeResponse 担保响应。
+type MsgGuaranteeResponse struct {
+	BondId string `json:"bond_id"`
+}
+
+func (m *MsgGuaranteeResponse) Reset()         {}
+func (m *MsgGuaranteeResponse) String() string { return "MsgGuaranteeResponse" }
+func (m *MsgGuaranteeResponse) ProtoMessage()  {}
+
+// MsgReleaseBond 释放担保消息。
+type MsgReleaseBond struct {
+	BondId  string `json:"bond_id"`
+	Inviter string `json:"inviter"`
+}
+
+func (msg *MsgReleaseBond) Reset()         {}
+func (msg *MsgReleaseBond) String() string { return "MsgReleaseBond" }
+func (msg *MsgReleaseBond) ProtoMessage()  {}
+func (msg *MsgReleaseBond) ValidateBasic() error { return nil }
+func (msg *MsgReleaseBond) GetSigners() []sdk.AccAddress {
+	return []sdk.AccAddress{sdk.AccAddress([]byte(msg.Inviter))}
+}
+
+// MsgReleaseBondResponse 释放担保响应。
+type MsgReleaseBondResponse struct{}
+
+func (m *MsgReleaseBondResponse) Reset()         {}
+func (m *MsgReleaseBondResponse) String() string { return "MsgReleaseBondResponse" }
+func (m *MsgReleaseBondResponse) ProtoMessage()  {}
+
+// MsgForfeitBond 没收担保消息。
+type MsgForfeitBond struct {
+	BondId string `json:"bond_id"`
+	Sender string `json:"sender"`
+}
+
+func (msg *MsgForfeitBond) Reset()         {}
+func (msg *MsgForfeitBond) String() string { return "MsgForfeitBond" }
+func (msg *MsgForfeitBond) ProtoMessage()  {}
+func (msg *MsgForfeitBond) ValidateBasic() error { return nil }
+func (msg *MsgForfeitBond) GetSigners() []sdk.AccAddress {
+	return []sdk.AccAddress{sdk.AccAddress([]byte(msg.Sender))}
+}
+
+// MsgForfeitBondResponse 没收担保响应。
+type MsgForfeitBondResponse struct{}
+
+func (m *MsgForfeitBondResponse) Reset()         {}
+func (m *MsgForfeitBondResponse) String() string { return "MsgForfeitBondResponse" }
+func (m *MsgForfeitBondResponse) ProtoMessage()  {}
+
+// ============================================================
+// MsgServer / QueryServer 接口
+// ============================================================
+
+// MsgServer 是明链消息服务器接口。
+type MsgServer interface {
+	Register(ctx context.Context, msg *MsgRegister) (*MsgRegisterResponse, error)
+	Repay(ctx context.Context, msg *MsgRepay) (*MsgRepayResponse, error)
+	UpdateFriends(ctx context.Context, msg *MsgUpdateFriends) (*MsgUpdateFriendsResponse, error)
+	Guarantee(ctx context.Context, msg *MsgGuarantee) (*MsgGuaranteeResponse, error)
+	ReleaseBond(ctx context.Context, msg *MsgReleaseBond) (*MsgReleaseBondResponse, error)
+	ForfeitBond(ctx context.Context, msg *MsgForfeitBond) (*MsgForfeitBondResponse, error)
+}
+
+// QueryServer 是明链查询服务器接口。
+type QueryServer interface {
+	User(ctx context.Context, req *QueryUserRequest) (*QueryUserResponse, error)
+	Pool(ctx context.Context, req *QueryPoolRequest) (*QueryPoolResponse, error)
+}
+
+// QueryUserRequest 用户查询请求。
+type QueryUserRequest struct {
+	ChainId []byte `json:"chain_id"`
+}
+
+// QueryUserResponse 用户查询响应。
+type QueryUserResponse struct {
+	Account *BrightAccount `json:"account"`
+}
+
+// QueryPoolRequest 资金池查询请求。
+type QueryPoolRequest struct{}
+
+// QueryPoolResponse 资金池查询响应。
+type QueryPoolResponse struct {
+	Balance uint64 `json:"balance"`
+}
+
+// RegisterMsgServer 注册消息服务器（桩实现，等待 proto 生成）。
+func RegisterMsgServer(srv interface{}, impl MsgServer) {
+	// 生产环境：由 protobuf 生成的 RegisterMsgServer 替代
+}
+
+// RegisterQueryServer 注册查询服务器（桩实现，等待 proto 生成）。
+func RegisterQueryServer(srv interface{}, impl QueryServer) {
+	// 生产环境：由 protobuf 生成的 RegisterQueryServer 替代
+}
+
+// UnwrapSDKContext 恒等映射。
+func UnwrapSDKContext(ctx sdk.Context) sdk.Context { return ctx }
+
+// ============================================================
 // 创世状态
 // ============================================================
 
 // GenesisState 定义模块的创世状态。
 type GenesisState struct {
-	Accounts    []*BrightAccount `json:"accounts"`
-	Bonds       []*GuaranteeBond `json:"bonds"`
+	Accounts    []*BrightAccount  `json:"accounts"`
+	Bonds       []*GuaranteeBond  `json:"bonds"`
 	PoolBalance uint64            `json:"pool_balance"`
 }
 
@@ -67,17 +394,17 @@ func DefaultGenesis() *GenesisState {
 func (gs GenesisState) Validate() error {
 	for i, account := range gs.Accounts {
 		if len(account.RecvPk) == 0 {
-			return sdkerrors.Wrapf(sdkerrors.ErrInvalidRequest, "account %d: missing recv_pk", i)
+			return fmt.Errorf("account %d: missing recv_pk", i)
 		}
 		if len(account.SendPk) == 0 {
-			return sdkerrors.Wrapf(sdkerrors.ErrInvalidRequest, "account %d: missing send_pk", i)
+			return fmt.Errorf("account %d: missing send_pk", i)
 		}
 	}
 	return nil
 }
 
 // ============================================================
-// 接口注册
+// 接口注册（手写桩 — Phase 6 迁移至 proto 生成）
 // ============================================================
 
 // RegisterInterfaces 向接口注册表注册消息类型。
@@ -87,6 +414,8 @@ func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
 		&MsgRepay{},
 		&MsgUpdateFriends{},
 		&MsgGuarantee{},
+		&MsgReleaseBond{},
+		&MsgForfeitBond{},
 	)
 }
 
@@ -94,4 +423,22 @@ func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
 func RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgRegister{}, "nekop2p/brightchain/MsgRegister", nil)
 	cdc.RegisterConcrete(&MsgRepay{}, "nekop2p/brightchain/MsgRepay", nil)
+	cdc.RegisterConcrete(&MsgUpdateFriends{}, "nekop2p/brightchain/MsgUpdateFriends", nil)
+	cdc.RegisterConcrete(&MsgGuarantee{}, "nekop2p/brightchain/MsgGuarantee", nil)
+	cdc.RegisterConcrete(&MsgReleaseBond{}, "nekop2p/brightchain/MsgReleaseBond", nil)
+	cdc.RegisterConcrete(&MsgForfeitBond{}, "nekop2p/brightchain/MsgForfeitBond", nil)
+}
+
+// ============================================================
+// 帮助函数
+// ============================================================
+
+// MarshalJSON 将 BrightAccount 序列化为 JSON（用于创世导出）。
+func (a *BrightAccount) MarshalJSON() ([]byte, error) {
+	return json.Marshal(a)
+}
+
+// UnmarshalJSON 从 JSON 反序列化 BrightAccount。
+func (a *BrightAccount) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, a)
 }

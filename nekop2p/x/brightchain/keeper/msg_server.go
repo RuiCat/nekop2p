@@ -28,10 +28,10 @@ func NewMsgServerImpl(keeper Keeper) types.MsgServer {
 }
 
 // Register 处理用户注册。
-func (ms msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*types.MsgRegisterResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	account, err := ms.k.RegisterUser(sdkCtx, msg)
+	account, err := ms.k.RegisterUser(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -42,38 +42,35 @@ func (ms msgServer) Register(ctx context.Context, msg *types.MsgRegister) (*type
 }
 
 // Repay 处理贷款还款 (语义翻转: 向资金池注资)。
-func (ms msgServer) Repay(ctx context.Context, msg *types.MsgRepay) (*types.MsgRepayResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) Repay(goCtx context.Context, msg *types.MsgRepay) (*types.MsgRepayResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// TODO: 验证 ZK 还款证明
-	// TODO: 根据 inkwell_ref 找到对应的暗链贷款并触发结算
+	// Phase 2.5: 验证 ZK 还款证明
+	// Phase 4: 根据 inkwell_ref 找到对应的暗链贷款并触发结算
 
-	totalAmount := uint64(0)
-	for _, coin := range msg.Amount {
-		totalAmount += coin.Amount.Uint64()
-	}
+	amount := msg.Amount.Amount.Uint64()
 
-	if err := ms.k.AddToPool(sdkCtx, totalAmount); err != nil {
+	if err := ms.k.AddToPool(ctx, amount); err != nil {
 		return nil, err
 	}
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(
 			types.EventTypeRepay,
-			sdk.NewAttribute(types.AttributeKeyAmount, fmt.Sprintf("%d", totalAmount)),
+			sdk.NewAttribute(types.AttributeKeyAmount, fmt.Sprintf("%d", amount)),
 		),
 	)
 
 	return &types.MsgRepayResponse{
-		Repaid: totalAmount,
+		Repaid: amount,
 	}, nil
 }
 
 // UpdateFriends 更新好友列表。
-func (ms msgServer) UpdateFriends(ctx context.Context, msg *types.MsgUpdateFriends) (*types.MsgUpdateFriendsResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) UpdateFriends(goCtx context.Context, msg *types.MsgUpdateFriends) (*types.MsgUpdateFriendsResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	account, err := ms.k.GetUser(sdkCtx, []byte(msg.Sender))
+	account, err := ms.k.GetUser(ctx, []byte(msg.Sender))
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +93,7 @@ func (ms msgServer) UpdateFriends(ctx context.Context, msg *types.MsgUpdateFrien
 	}
 	account.Friends = filtered
 
-	if err := ms.k.SetUser(sdkCtx, account); err != nil {
+	if err := ms.k.SetUser(ctx, account); err != nil {
 		return nil, err
 	}
 
@@ -104,10 +101,10 @@ func (ms msgServer) UpdateFriends(ctx context.Context, msg *types.MsgUpdateFrien
 }
 
 // Guarantee 创建担保债券。
-func (ms msgServer) Guarantee(ctx context.Context, msg *types.MsgGuarantee) (*types.MsgGuaranteeResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) Guarantee(goCtx context.Context, msg *types.MsgGuarantee) (*types.MsgGuaranteeResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	bond, err := ms.k.CreateBond(sdkCtx, msg)
+	bond, err := ms.k.CreateBond(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -118,16 +115,16 @@ func (ms msgServer) Guarantee(ctx context.Context, msg *types.MsgGuarantee) (*ty
 }
 
 // ReleaseBond 释放担保债券。
-func (ms msgServer) ReleaseBond(ctx context.Context, msg *types.MsgReleaseBond) (*types.MsgReleaseBondResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) ReleaseBond(goCtx context.Context, msg *types.MsgReleaseBond) (*types.MsgReleaseBondResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	bond, err := ms.k.GetBond(sdkCtx, msg.BondId)
+	bond, err := ms.k.GetBond(ctx, msg.BondId)
 	if err != nil {
 		return nil, err
 	}
 
 	bond.Status = types.BondStatus_RELEASED
-	if err := ms.k.SetBond(sdkCtx, bond); err != nil {
+	if err := ms.k.SetBond(ctx, bond); err != nil {
 		return nil, err
 	}
 
@@ -135,16 +132,16 @@ func (ms msgServer) ReleaseBond(ctx context.Context, msg *types.MsgReleaseBond) 
 }
 
 // ForfeitBond 没收违约担保债券。
-func (ms msgServer) ForfeitBond(ctx context.Context, msg *types.MsgForfeitBond) (*types.MsgForfeitBondResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (ms msgServer) ForfeitBond(goCtx context.Context, msg *types.MsgForfeitBond) (*types.MsgForfeitBondResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	bond, err := ms.k.GetBond(sdkCtx, msg.BondId)
+	bond, err := ms.k.GetBond(ctx, msg.BondId)
 	if err != nil {
 		return nil, err
 	}
 
 	bond.Status = types.BondStatus_FORFEITED
-	if err := ms.k.SetBond(sdkCtx, bond); err != nil {
+	if err := ms.k.SetBond(ctx, bond); err != nil {
 		return nil, err
 	}
 
@@ -166,10 +163,10 @@ func NewQueryServerImpl(keeper Keeper) types.QueryServer {
 }
 
 // User 查询用户信息。
-func (qs queryServer) User(ctx context.Context, req *types.QueryUserRequest) (*types.QueryUserResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (qs queryServer) User(goCtx context.Context, req *types.QueryUserRequest) (*types.QueryUserResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	account, err := qs.k.GetUser(sdkCtx, req.ChainId)
+	account, err := qs.k.GetUser(ctx, req.ChainId)
 	if err != nil {
 		return nil, err
 	}
@@ -180,10 +177,10 @@ func (qs queryServer) User(ctx context.Context, req *types.QueryUserRequest) (*t
 }
 
 // Pool 查询资金池余额。
-func (qs queryServer) Pool(ctx context.Context, req *types.QueryPoolRequest) (*types.QueryPoolResponse, error) {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+func (qs queryServer) Pool(goCtx context.Context, req *types.QueryPoolRequest) (*types.QueryPoolResponse, error) {
+	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	return &types.QueryPoolResponse{
-		Balance: qs.k.GetPoolBalance(sdkCtx),
+		Balance: qs.k.GetPoolBalance(ctx),
 	}, nil
 }

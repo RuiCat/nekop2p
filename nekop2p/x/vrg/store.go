@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg VRG 状态持久化。
 //
 // 将虚拟根网图核心状态（创世树、纪元、外交通道、双花绑定）

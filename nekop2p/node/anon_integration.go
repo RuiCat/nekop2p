@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 package node
 
 import (
@@ -115,4 +117,3 @@ func (n *Node) getTargetIPv6(target peer.ChainID) [16]byte {
 	}
 	return [16]byte{}
 }
-

@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package types 提供明链模块的类型定义。
 //
 // 生产环境中，这些类型由 protoc 从 .proto 文件生成。

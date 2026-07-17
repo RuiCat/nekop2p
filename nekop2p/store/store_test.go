@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 package store_test
 
 import (

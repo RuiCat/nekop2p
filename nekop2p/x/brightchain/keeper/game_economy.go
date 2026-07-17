@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package keeper 动态经济参数治理。
 //
 // 实现掉落算法全局上限 P 值的自适应调节机制：

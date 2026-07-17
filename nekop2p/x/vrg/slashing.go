@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg 社区级 Slashing (VRG-09)。
 //
 // 社区级 Slashing 为虚拟根网图提供集体惩罚机制。

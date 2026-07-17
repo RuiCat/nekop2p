@@ -18,14 +18,16 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.0.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-6.0.0-blue" alt="version">
   <img src="https://img.shields.io/badge/progress-100%25-brightgreen" alt="progress">
   <img src="https://img.shields.io/badge/language-Go%201.23+-00ADD8?logo=go" alt="Go">
-  <img src="https://img.shields.io/badge/consensus-PBFT%20%2B%20SimpleEngine-2E3148" alt="Consensus">
+  <img src="https://img.shields.io/badge/consensus-PBFT%20%7C%20CometBFT-2E3148" alt="Consensus">
+  <img src="https://img.shields.io/badge/Cosmos%20SDK-v0.54-6A39B0" alt="CosmosSDK">
   <img src="https://img.shields.io/badge/audit-15%20rounds-brightgreen" alt="audit">
   <img src="https://img.shields.io/badge/license-CC0%201.0-lightgrey" alt="license">
-  <img src="https://img.shields.io/badge/tests-32%2F32%20passing-success" alt="tests">
+  <img src="https://img.shields.io/badge/tests-60%2F60%20passing-success" alt="tests">
   <img src="https://img.shields.io/badge/race-0%20warnings-success" alt="race">
+  <img src="https://img.shields.io/badge/build-dual%20mode-blueviolet" alt="build">
 </p>
 
 ---
@@ -48,6 +50,23 @@
 | 💱 **双链清算** | 明链（信用/担保/追偿）+ 暗链（匿名借贷/票据/门锁） |
 | 🎮 **游戏应用层** | 明域内置策略博弈玩法，暗域提供隐私支付通道 |
 | 📡 **P2P 通信层** | Noise IK/NK 握手 · Signal 双棘轮 · ChaCha20-Poly1305 帧加密 |
+| ⛓️ **双模式构建** | `go build` (P2P原生) + `go build -tags cosmos` (Cosmos SDK) |
+
+### 快速开始
+
+```bash
+# P2P 原生模式
+make build && make test
+
+# Cosmos SDK 模式
+make build-cosmos && make test-cosmos
+
+# 初始化并启动 Cosmos 节点
+make run-cosmos
+
+# 全量测试
+make test-all
+```
 
 ### 技术栈
 

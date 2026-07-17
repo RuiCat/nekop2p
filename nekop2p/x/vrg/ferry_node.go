@@ -1,3 +1,5 @@
+//go:build !cosmos
+
 // Package vrg 摆渡节点完整协议 (Ferry Node Protocol)。
 //
 // 摆渡节点是虚拟根网图中物理传递数据的角色：
