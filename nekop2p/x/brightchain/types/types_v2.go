@@ -132,7 +132,7 @@ type GuaranteeBond struct {
 	Status                BondStatus `json:"status"`
 }
 
-// Pool 资金池。
+// Pool 资金池 (含利息系统)。
 type Pool struct {
 	TotalBalance   uint64 `json:"total_balance"`
 	SalaryRelay    uint64 `json:"salary_relay"`
@@ -142,6 +142,8 @@ type Pool struct {
 	Community      uint64 `json:"community"`
 	GameFees       uint64 `json:"game_fees"`
 	GameCommission uint64 `json:"game_commission"`
+	InterestEarned  uint64 `json:"interest_earned"`
+	InterestReserve uint64 `json:"interest_reserve"`
 }
 
 // GameInfo 游戏信息。
@@ -444,4 +446,39 @@ func (a *BrightAccount) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON 从 JSON 反序列化 BrightAccount。
 func (a *BrightAccount) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, a)
+}
+
+// ============================================================
+// 动态手续费参数 (治理可调)
+// ============================================================
+
+// FeeParams 手续费分配参数。
+type FeeParams struct {
+	SalaryRelayRate  uint64 `json:"salary_relay_rate"`  // 中继节点比例 (% 默认25)
+	SalaryRecordRate uint64 `json:"salary_record_rate"` // 记录节点比例 (% 默认25)
+	SeedLoanRate     uint64 `json:"seed_loan_rate"`     // 种子借贷比例 (% 默认20)
+	BadDebtRate      uint64 `json:"bad_debt_rate"`      // 坏账准备金比例 (% 默认15)
+	CommunityRate    uint64 `json:"community_rate"`     // 社区基金比例 (% 默认15)
+	DynamicEnabled   bool   `json:"dynamic_enabled"`    // 是否启用动态费率
+}
+
+// DefaultFeeParams 返回默认手续费参数。
+func DefaultFeeParams() FeeParams {
+	return FeeParams{
+		SalaryRelayRate:  25,
+		SalaryRecordRate: 25,
+		SeedLoanRate:     20,
+		BadDebtRate:      15,
+		CommunityRate:    15,
+		DynamicEnabled:   false,
+	}
+}
+
+// Validate 验证参数合法性（比例合计=100）。
+func (fp FeeParams) Validate() error {
+	sum := fp.SalaryRelayRate + fp.SalaryRecordRate + fp.SeedLoanRate + fp.BadDebtRate + fp.CommunityRate
+	if sum != 100 {
+		return fmt.Errorf("fee params sum must be 100, got %d", sum)
+	}
+	return nil
 }

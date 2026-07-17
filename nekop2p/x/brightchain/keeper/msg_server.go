@@ -42,31 +42,39 @@ func (ms msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*ty
 	}, nil
 }
 
-// Repay 处理贷款还款 (语义翻转: 向资金池注资)。
+// Repay 处理贷款还款 (语义翻转: 向资金池注资 + 利息计算)。
 func (ms msgServer) Repay(goCtx context.Context, msg *types.MsgRepay) (*types.MsgRepayResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// ZK 还款证明验证 (Phase 2.5: gnark 电路就绪后激活)
+	// ZK 还款证明验证 (Phase 2.5)
 	if len(msg.ZkRepayProof) > 0 {
 		log.Printf("[brightchain] WARNING: zk repay proof accepted without verification (Phase 2.5 pending)")
 	}
-	// 跨链结算 (Phase 4: 根据 inkwell_ref 触发暗链 SettleLoan)
+	// 跨链结算 (Phase 4)
 	if len(msg.InkwellRef) > 0 {
 		log.Printf("[brightchain] inkwell_ref present: %x (Phase 4: cross-chain settlement pending)", msg.InkwellRef[:8])
 	}
 
 	amount := msg.Amount.Amount.Uint64()
 
+	// 利息计算
+	sender, err := ms.k.GetUser(ctx, []byte(msg.FromAddress))
+	if err == nil && sender != nil {
+		durationSinceLast := ctx.BlockTime().Unix() - sender.NodeTermStart
+		if durationSinceLast > 0 && durationSinceLast < SecondsPerYear {
+			interest, _ := ms.k.CollectInterest(ctx, amount, sender.CreditScore, durationSinceLast, "")
+			amount += interest
+		}
+	}
+
 	if err := ms.k.AddToPool(ctx, amount); err != nil {
 		return nil, err
 	}
 
-	ctx.EventManager().EmitEvent(
-		sdk.NewEvent(
-			types.EventTypeRepay,
-			sdk.NewAttribute(types.AttributeKeyAmount, fmt.Sprintf("%d", amount)),
-		),
-	)
+	ctx.EventManager().EmitEvent(sdk.NewEvent(
+		types.EventTypeRepay,
+		sdk.NewAttribute(types.AttributeKeyAmount, fmt.Sprintf("%d", amount)),
+	))
 
 	return &types.MsgRepayResponse{
 		Repaid: amount,

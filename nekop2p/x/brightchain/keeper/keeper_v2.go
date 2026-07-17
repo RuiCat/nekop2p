@@ -343,8 +343,67 @@ func (k Keeper) addBondRef(ctx sdk.Context, inviter, invitee, bondID string) {
 }
 
 // ============================================================
-// 资金池（含子账户分配）
+// 资金池（含子账户分配 + 利息系统）
 // ============================================================
+
+// 利息参数
+const (
+	BaseInterestRate       = 500  // 基础年利率 5.00% (基点)
+	RiskPremiumMin         = 100  // 最低风险溢价 1.00%
+	RiskPremiumMax         = 1000 // 最高风险溢价 10.00%
+	SecondsPerYear         = 31536000
+	InterestSeedLoanShare  = 50   // 50% 回种子借贷池
+	InterestGuarantorShare = 25   // 25% 分给担保人
+	InterestCommunityShare = 25   // 25% 社区基金
+)
+
+// CalculateInterest 计算贷款利息。
+// 利率 = 基础利率 + max(最低溢价, (1000-信用分)/1000 × 最高溢价)
+func (k Keeper) CalculateInterest(principal uint64, creditScore uint64, durationSec int64) uint64 {
+	// 风险溢价: 信用分越低，利率越高
+	riskScore := uint64(1000)
+	if creditScore < 1000 {
+		riskScore = 1000 - creditScore
+	}
+	riskPremium := RiskPremiumMin + riskScore*(RiskPremiumMax-RiskPremiumMin)/1000
+	annualRate := BaseInterestRate + riskPremium
+
+	// 利息 = 本金 × 年利率(基点) / 10000 × 时间(秒) / 年秒数
+	interest := uint64(float64(principal) * float64(annualRate) / 10000.0 * float64(durationSec) / float64(SecondsPerYear))
+	return interest
+}
+
+// CollectInterest 收取利息并分配。
+func (k Keeper) CollectInterest(ctx sdk.Context, principal uint64, creditScore uint64, durationSec int64, guarantorAddr string) (uint64, error) {
+	interest := k.CalculateInterest(principal, creditScore, durationSec)
+	if interest == 0 {
+		return 0, nil
+	}
+
+	pool := k.GetPool(ctx)
+	pool.InterestEarned += interest
+	pool.InterestReserve += interest
+
+	// 分配利息
+	seedLoanShare := interest * InterestSeedLoanShare / 100
+	guarantorShare := interest * InterestGuarantorShare / 100
+	communityShare := interest - seedLoanShare - guarantorShare
+
+	pool.SeedLoanReserve += seedLoanShare
+	pool.Community += communityShare
+	pool.TotalBalance += interest
+
+	if err := k.SetPool(ctx, pool); err != nil {
+		return 0, err
+	}
+
+	// 担保人分红
+	if guarantorAddr != "" && guarantorShare > 0 {
+		k.CreditSalary(ctx, guarantorAddr, guarantorShare)
+	}
+
+	return interest, nil
+}
 
 func (k Keeper) GetPool(ctx sdk.Context) *types.Pool {
 	store := ctx.KVStore(k.storeKey)
@@ -386,17 +445,18 @@ func (k Keeper) AddToPool(ctx sdk.Context, amount uint64) error {
 	return k.SetPool(ctx, pool)
 }
 
-// CollectFees 收取手续费并按比例分配到子账户：
-//
-//	25% → SalaryRelay, 25% → SalaryRecord
-//	20% → SeedLoanReserve, 15% → BadDebtReserve, 15% → Community
-func (k Keeper) CollectFees(ctx sdk.Context, feeAmount uint64) error {
+// CollectFees 收取手续费并按参数化比例分配到子账户。
+func (k Keeper) CollectFees(ctx sdk.Context, feeAmount uint64, params *types.FeeParams) error {
+	if params == nil {
+		def := types.DefaultFeeParams()
+		params = &def
+	}
 	pool := k.GetPool(ctx)
-	pool.SalaryRelay += feeAmount * 25 / 100
-	pool.SalaryRecord += feeAmount * 25 / 100
-	pool.SeedLoanReserve += feeAmount * 20 / 100
-	pool.BadDebtReserve += feeAmount * 15 / 100
-	pool.Community += feeAmount * 15 / 100
+	pool.SalaryRelay += feeAmount * params.SalaryRelayRate / 100
+	pool.SalaryRecord += feeAmount * params.SalaryRecordRate / 100
+	pool.SeedLoanReserve += feeAmount * params.SeedLoanRate / 100
+	pool.BadDebtReserve += feeAmount * params.BadDebtRate / 100
+	pool.Community += feeAmount * params.CommunityRate / 100
 	pool.TotalBalance += feeAmount
 	return k.SetPool(ctx, pool)
 }

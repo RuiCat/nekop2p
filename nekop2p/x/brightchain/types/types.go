@@ -159,6 +159,8 @@ type Pool struct {
 	Community        uint64
 	GameFees         uint64 // 游戏交易手续费池
 	GameCommission   uint64 // 游戏服务器分成池
+	InterestEarned   uint64 // 累计利息收入
+	InterestReserve  uint64 // 利息储备金 (待分配)
 }
 
 // ===== Message types =====
