@@ -92,7 +92,7 @@ func (m *MsgServerImpl) Repay(ctx context.Context, msg *types.MsgRepay) (*types.
 	if len(msg.ZkRepayProof) > 0 {
 		verifier := m.keeper.ZkVerifier()
 		if verifier != nil {
-			repayAssignment := zk.NewRepayAssignment(string(msg.InkwellRef), msg.Amount)
+			repayAssignment := zk.NewRepayAssignment(string(msg.InkwellRef), msg.Amount, msg.Amount, 0)
 			if err := verifier.VerifyRepayProof(msg.ZkRepayProof, repayAssignment); err != nil {
 				return nil, fmt.Errorf("zk repay proof invalid: %w", err)
 			}
@@ -120,7 +120,7 @@ func (m *MsgServerImpl) RegisterNode(ctx context.Context, msg *types.MsgRegister
 	if len(msg.ZkWeightProof) > 0 {
 		verifier := m.keeper.ZkVerifier()
 		if verifier != nil {
-			workAssignment := zk.NewWorkAssignment(msg.NodeAddress, msg.ExamResultHash, 0)
+			workAssignment := zk.NewWorkAssignment(0, 1000, 1024, 100, 0, 0, 0, 0)
 			if err := verifier.VerifyWorkProof(msg.ZkWeightProof, workAssignment); err != nil {
 				return nil, fmt.Errorf("zk work proof invalid: %w", err)
 			}

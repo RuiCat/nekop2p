@@ -41,6 +41,7 @@ import (
 	inkwelltypes "github.com/nekop2p/nekop2p/x/inkwell/types"
 	"github.com/nekop2p/nekop2p/ante"
 	"github.com/nekop2p/nekop2p/x/vrg"
+	zk "github.com/nekop2p/nekop2p/x/zk"
 )
 
 const (
@@ -131,6 +132,11 @@ func NewNekoApp(
 
 	// 跨模块桥接: Inkwell → Darkchain
 	darkKeeper.SetInkwellKeeper(&inkwellKeeper)
+
+	// ZK 验证器初始化 (Phase 6: 从链上参数模块加载 VK)
+	zkVerifier := zk.NewVerifier()
+	brightKeeper.SetZkVerifier(zkVerifier)
+	// darkKeeper.SetZkVerifier(zkVerifier) // 暗链也使用同一验证器
 
 	app := &NekoApp{
 		BaseApp:           bApp,

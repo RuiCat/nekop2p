@@ -26,11 +26,15 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/nekop2p/nekop2p/x/brightchain/types"
+	zk "github.com/nekop2p/nekop2p/x/zk"
 )
 
 // Keeper 管理明链模块的状态（IAVL 持久化）。
 type Keeper struct {
 	storeKey storetypes.StoreKey
+
+	// ZK 验证器
+	zkVerifier *zk.Verifier
 
 	// Phase 2: 延期追偿（内联实现）
 	provisions     map[string]*DeferredProvision
@@ -59,6 +63,11 @@ func (k Keeper) StoreKey() storetypes.StoreKey { return k.storeKey }
 
 func marshal(v interface{}) ([]byte, error)    { return json.Marshal(v) }
 func unmarshal(data []byte, v interface{}) error { return json.Unmarshal(data, v) }
+
+// SetZkVerifier 设置 ZK 证明验证器。
+func (k *Keeper) SetZkVerifier(v *zk.Verifier) {
+	k.zkVerifier = v
+}
 
 // ============================================================
 // 用户管理
@@ -131,9 +140,15 @@ func (k Keeper) RegisterUser(ctx sdk.Context, msg *types.MsgRegister) (*types.Br
 
 	// ZK 身份证明验证
 	if len(msg.ZkIdentityProof) > 0 {
-		// ZK 验证器尚未部署 — 接受证明但记录警告
-		// Phase 2.5: 集成 gnark groth16.Verify
-		log.Printf("[brightchain] WARNING: zk identity proof accepted without verification for %x (Phase 2.5 pending)", chainID[:8])
+		if k.zkVerifier != nil {
+			assignment := zk.NewIdentityAssignment(msg.SendPk, 0, 0)
+			if err := k.zkVerifier.VerifyIdentityProof(msg.ZkIdentityProof, assignment); err != nil {
+				return nil, fmt.Errorf("zk identity proof invalid: %w", err)
+			}
+			log.Printf("[brightchain] zk identity proof verified for %x", chainID[:8])
+		} else {
+			log.Printf("[brightchain] WARNING: zk identity proof accepted without verification for %x (verifier not loaded)", chainID[:8])
+		}
 	}
 
 	// 邀请凭证验证（非创世阶段需要 ≥3 个有效 Ed25519 签名）

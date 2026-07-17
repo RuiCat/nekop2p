@@ -186,10 +186,13 @@ func NewCreditAssignment(amount uint64, creditTreeRoot uint64) *SimpleCreditCirc
 	}
 }
 
-// SimpleRepayCircuit 简化的还款电路赋值，用于链上验证。
+// SimpleRepayCircuit 还款电路赋值，用于链上验证。
+// 公开输入与 zkcircuits/repay/circuit.go 完全匹配。
 type SimpleRepayCircuit struct {
-	LoanID  frontend.Variable `gnark:",public"`
-	Amount  frontend.Variable `gnark:",public"`
+	LoanID      frontend.Variable `gnark:",public"`
+	TotalRepaid frontend.Variable `gnark:",public"`
+	LoanAmount  frontend.Variable `gnark:",public"`
+	BrightRoot  frontend.Variable `gnark:",public"`
 }
 
 func (c *SimpleRepayCircuit) Define(api frontend.API) error {
@@ -197,30 +200,42 @@ func (c *SimpleRepayCircuit) Define(api frontend.API) error {
 }
 
 // NewRepayAssignment 创建用于链上验证的还款电路赋值。
-func NewRepayAssignment(loanID string, amount uint64) *SimpleRepayCircuit {
+func NewRepayAssignment(loanID string, totalRepaid, loanAmount uint64, brightRoot uint64) *SimpleRepayCircuit {
 	return &SimpleRepayCircuit{
-		LoanID: bytesToVariable([]byte(loanID)),
-		Amount: amount,
+		LoanID:      bytesToVariable([]byte(loanID)),
+		TotalRepaid: totalRepaid,
+		LoanAmount:  loanAmount,
+		BrightRoot:  brightRoot,
 	}
 }
 
-// SimpleWorkCircuit 简化的工作量电路赋值，用于链上验证。
+// SimpleWorkCircuit 工作量电路赋值，用于链上验证。
+// 公开输入与 zkcircuits/work/circuit.go 完全匹配 (8 个公开输入)。
 type SimpleWorkCircuit struct {
-	NodeID    frontend.Variable `gnark:",public"`
-	Epoch     frontend.Variable `gnark:",public"`
-	WorkHash  frontend.Variable `gnark:",public"`
+	EpochNumber         frontend.Variable `gnark:",public"`
+	MinPacketsForwarded frontend.Variable `gnark:",public"`
+	MinStorageBytes     frontend.Variable `gnark:",public"`
+	MinQueryResponses   frontend.Variable `gnark:",public"`
+	DataRoot            frontend.Variable `gnark:",public"`
+	PacketsForwarded    frontend.Variable `gnark:",public"`
+	StorageBytes        frontend.Variable `gnark:",public"`
+	QueryResponses      frontend.Variable `gnark:",public"`
 }
 
 func (c *SimpleWorkCircuit) Define(api frontend.API) error {
 	return nil
 }
 
-// NewWorkAssignment 创建用于链上验证的工作量电路赋值。
-// epoch 为当前链上 Epoch（生产环境: 从链上获取）。
-func NewWorkAssignment(nodeAddress string, examHash []byte, epoch uint64) *SimpleWorkCircuit {
+// NewWorkAssignment 创建用于链上验证的工作量电路赋值 (8 个公开输入)。
+func NewWorkAssignment(epoch, minPackets, minStorage, minQueries, dataRoot, packets, storage, queries uint64) *SimpleWorkCircuit {
 	return &SimpleWorkCircuit{
-		NodeID:   bytesToVariable([]byte(nodeAddress)),
-		Epoch:    epoch,
-		WorkHash: bytesToVariable(examHash),
+		EpochNumber:         epoch,
+		MinPacketsForwarded: minPackets,
+		MinStorageBytes:     minStorage,
+		MinQueryResponses:   minQueries,
+		DataRoot:            dataRoot,
+		PacketsForwarded:    packets,
+		StorageBytes:        storage,
+		QueryResponses:      queries,
 	}
 }
