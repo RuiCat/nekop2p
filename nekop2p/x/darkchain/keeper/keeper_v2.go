@@ -62,13 +62,22 @@ func (k *Keeper) SetInkwellKeeper(ik *inkwellkeeper.Keeper) {
 	k.inkwellKeeper = ik
 }
 
-// GenerateInkwellParams 桥接到 Inkwell 生成混沌结算参数。
-func (k *Keeper) GenerateInkwellParams(loanID string, borrowerSeed, lenderSeed []byte, amount uint64) *inkwelltypes.InkwellParams {
+// GenerateInkwellParams 桥接到 Inkwell 生成混沌结算参数 + 创建碎片计划。
+func (k *Keeper) GenerateInkwellParams(ctx sdk.Context, loanID string, borrowerSeed, lenderSeed []byte, amount uint64) (*inkwelltypes.InkwellParams, *inkwelltypes.FragmentPlan, error) {
 	if k.inkwellKeeper == nil {
-		return &inkwelltypes.InkwellParams{LoanID: loanID, TotalAmount: amount}
+		params := &inkwelltypes.InkwellParams{LoanID: loanID, TotalAmount: amount}
+		return params, nil, nil
 	}
 	combined := inkwellkeeper.CombineSeeds(borrowerSeed, lenderSeed)
-	return k.inkwellKeeper.GenerateParams(loanID, combined, amount)
+	params := k.inkwellKeeper.GenerateParams(loanID, combined, amount)
+
+	// 创建持久化的碎片还款计划
+	plan, err := k.inkwellKeeper.CreateFragmentPlan(ctx, params)
+	if err != nil {
+		return params, nil, fmt.Errorf("create fragment plan: %w", err)
+	}
+
+	return params, plan, nil
 }
 
 func (k Keeper) StoreKey() storetypes.StoreKey { return k.storeKey }
