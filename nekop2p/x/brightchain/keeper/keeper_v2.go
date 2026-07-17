@@ -159,6 +159,7 @@ func (k Keeper) RegisterUser(ctx sdk.Context, msg *types.MsgRegister) (*types.Br
 	account := &types.BrightAccount{
 		RecvPk:      msg.RecvPk,
 		SendPk:      msg.SendPk,
+		Sequence:    1, // 初始交易序号，递增防重放
 		SeedPhase:   !k.IsGenesisPhase(ctx),
 		Guarantors:  extractGuarantorIDs(msg.GuarantorSigs),
 		TrustWeight: 10,
@@ -208,6 +209,32 @@ func (k Keeper) UpdateFriends(ctx sdk.Context, sender string, add []*types.Frien
 // UpdateUserBlock 持久化用户区块（需要外部提供 Context）。
 func (k Keeper) UpdateUserBlock(ctx sdk.Context, account *types.BrightAccount) error {
 	return k.SetUser(ctx, account)
+}
+
+// ============================================================
+// 交易序号 (防重放)
+// ============================================================
+
+// IncrementSequence 递增用户交易序号并返回新值（防重放攻击）。
+func (k Keeper) IncrementSequence(ctx sdk.Context, address string) (uint64, error) {
+	account, err := k.GetUser(ctx, []byte(address))
+	if err != nil {
+		return 0, err
+	}
+	account.Sequence++
+	if err := k.SetUser(ctx, account); err != nil {
+		return 0, err
+	}
+	return account.Sequence, nil
+}
+
+// GetSequence 返回用户当前交易序号。
+func (k Keeper) GetSequence(ctx sdk.Context, address string) uint64 {
+	account, err := k.GetUser(ctx, []byte(address))
+	if err != nil {
+		return 0
+	}
+	return account.Sequence
 }
 
 // ============================================================

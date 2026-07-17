@@ -15,6 +15,7 @@ import (
 
 func newTestChain(t *testing.T) (*app.NekoApp, func()) {
 	t.Helper()
+	app.ResetReplayCache() // 测试间重置重放防护缓存
 	dir, err := os.MkdirTemp("", "nekop2p-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)

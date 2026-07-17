@@ -12,6 +12,9 @@ type Tx struct {
 	Type      string // 交易类型: "register"/"guarantee"/"repay"/"loan"
 	Data      []byte // 序列化的交易数据
 	SenderID  string // 发送者 chain_id (用于黑名单/审计)
+	Sequence  uint64 // 发送者交易序号 (防重放)
+	Signature []byte // Ed25519 签名 (send_sk 对 SignBytes 的签名)
+	SignBytes []byte // 被签名的数据 (Data + Sequence + SenderID)
 	Status    string // "pending" / "confirmed" / "failed"
 	BlockNum  int64  // 确认区块号 (0=pending)
 	CreatedAt int64  // 提交时间戳

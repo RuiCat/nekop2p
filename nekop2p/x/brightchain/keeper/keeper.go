@@ -149,6 +149,7 @@ func (k *Keeper) RegisterUser(ctx types.Context, msg *types.MsgRegister) (*types
 		Address:     chainID.String(),
 		RecvPk:      msg.RecvPk,
 		SendPk:      msg.SendPk,
+		Sequence:    1, // 初始交易序号，递增防重放
 		SeedPhase:   !k.IsGenesisPhase(), // 创世用户跳过种子期
 		Guarantors:  extractGuarantorIDs(msg.GuarantorSigs),
 		TrustWeight: 10,
@@ -371,6 +372,33 @@ func (k *Keeper) GetAllUsers(ctx types.Context) []*types.UserBlock {
 		})
 	})
 	return result
+}
+
+// ===== 交易序号 (防重放) =====
+
+// IncrementSequence 递增用户交易序号并返回新值。
+// 应在每笔交易成功后调用，确保重放攻击无效。
+func (k *Keeper) IncrementSequence(ctx types.Context, address string) (uint64, error) {
+	chainID := parseChainID(address)
+	block := k.GetUserBlock(ctx, chainID)
+	if block == nil {
+		return 0, fmt.Errorf("user not found: %s", address)
+	}
+	block.Sequence++
+	data := mustMarshal(block)
+	return block.Sequence, k.store.Write(func(tx *store.Tx) error {
+		return tx.PutUser(string(chainID[:]), data)
+	})
+}
+
+// GetSequence 返回用户当前交易序号。
+func (k *Keeper) GetSequence(ctx types.Context, address string) uint64 {
+	chainID := parseChainID(address)
+	block := k.GetUserBlock(ctx, chainID)
+	if block == nil {
+		return 0
+	}
+	return block.Sequence
 }
 
 // ===== 信任权重 =====

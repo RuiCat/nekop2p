@@ -4,8 +4,10 @@ package app
 
 import (
 	"crypto/sha256"
+	"crypto/ed25519"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/nekop2p/nekop2p/consensus"
@@ -85,13 +87,53 @@ func (app *NekoApp) processBlock(event consensus.BlockEvent) {
 	}
 }
 
-// executeTx 执行一笔交易。
+// executeTx 执行一笔交易（含重放防护）。
 func (app *NekoApp) executeTx(tx *Tx) {
-	// 黑名单检查：使用发送者 chain_id 而非交易哈希
+	// === 重放防护层 ===
+
+	// 0. 交易去重检查（基于交易 ID）
+	if app.isTxReplay(tx.ID) {
+		log.Printf("[chain] replay rejected: tx %s already executed", tx.ID[:12])
+		return
+	}
+
+	// 1. 黑名单检查
 	if tx.SenderID != "" && app.IsNodeBanned(tx.SenderID) {
 		log.Printf("[chain] rejected tx from banned node: %s", tx.SenderID[:16])
 		return
 	}
+
+	// 2. 签名验证（如果交易携带签名）
+	if tx.SenderID != "" && len(tx.Signature) > 0 && len(tx.SignBytes) > 0 {
+		chainID := parseChainIDStr(tx.SenderID)
+		block := app.BrightChainKeeper.GetUserBlock(struct{}{}, chainID)
+		if block != nil && len(block.SendPk) == 32 {
+			if !ed25519Verify(block.SendPk, tx.SignBytes, tx.Signature) {
+				log.Printf("[chain] signature rejected: invalid signature for %s", tx.SenderID[:16])
+				return
+			}
+		}
+	}
+
+	// 3. 序列号防重放检查
+	if tx.SenderID != "" && tx.Sequence > 0 {
+		currentSeq := app.BrightChainKeeper.GetSequence(struct{}{}, tx.SenderID)
+		if tx.Sequence <= currentSeq {
+			log.Printf("[chain] sequence rejected: tx seq=%d <= chain seq=%d for %s",
+				tx.Sequence, currentSeq, tx.SenderID[:16])
+			return
+		}
+	}
+
+	// 4. 记录交易 ID（防重放）
+	app.markTxExecuted(tx.ID)
+
+	// 5. 执行后递增发送者 Sequence（防重放）
+	defer func() {
+		if tx.SenderID != "" && tx.Sequence > 0 {
+			app.BrightChainKeeper.IncrementSequence(struct{}{}, tx.SenderID)
+		}
+	}()
 
 	switch tx.Type {
 	case "register":
@@ -223,6 +265,55 @@ func (app *NekoApp) SubmitTx(txType string, data []byte) string {
 func generateTxID(data []byte) string {
 	h := sha256.Sum256(data)
 	return fmt.Sprintf("%x", h[:16])
+}
+
+// ===== 重放防护辅助 =====
+
+var (
+	executedTxIDs   = make(map[string]bool) // 已执行交易 ID 集合
+	executedTxIDsMu sync.Mutex
+)
+
+// isTxReplay 检查交易 ID 是否已被执行（防重放）。
+func (app *NekoApp) isTxReplay(txID string) bool {
+	executedTxIDsMu.Lock()
+	defer executedTxIDsMu.Unlock()
+	return executedTxIDs[txID]
+}
+
+// markTxExecuted 标记交易 ID 为已执行。
+func (app *NekoApp) markTxExecuted(txID string) {
+	executedTxIDsMu.Lock()
+	defer executedTxIDsMu.Unlock()
+	executedTxIDs[txID] = true
+	// 定期清理旧条目（保留最近 10000 条）
+	if len(executedTxIDs) > 10000 {
+		// 简单策略：清空一半
+		count := 0
+		for k := range executedTxIDs {
+			delete(executedTxIDs, k)
+			count++
+			if count >= 5000 {
+				break
+			}
+		}
+	}
+}
+
+
+// ResetReplayCache 重置重放防护缓存（仅用于测试）。
+func ResetReplayCache() {
+	executedTxIDsMu.Lock()
+	defer executedTxIDsMu.Unlock()
+	executedTxIDs = make(map[string]bool)
+}
+
+// ed25519Verify 验证 Ed25519 签名（链上验证辅助）。
+func ed25519Verify(pubKey, message, sig []byte) bool {
+	if len(sig) != 64 || len(pubKey) != 32 {
+		return false
+	}
+	return ed25519.Verify(pubKey, message, sig)
 }
 
 // RunOnce 手动执行一个区块（用于测试或单步调试），包含交易处理。
