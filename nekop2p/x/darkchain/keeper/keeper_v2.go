@@ -32,14 +32,14 @@ import (
 type Keeper struct {
 	storeKey storetypes.StoreKey
 
-	mu              sync.RWMutex
+	mu              *sync.RWMutex
 	identityMarkers map[string]bool // 身份标记缓存（运行时）
 
 	// Credit UTXO 状态（Phase 3）
 	creditCommitments map[string]uint64 // commitment hex → face value
-	creditCMu         sync.RWMutex
+	creditCMu         *sync.RWMutex
 	nullifierSet      map[string]bool // nullifier hex → spent
-	nullifierMu       sync.RWMutex
+	nullifierMu       *sync.RWMutex
 
 	// 当前周期标记（Phase 3.3）
 	currentCycleMarker []byte
@@ -52,9 +52,12 @@ type Keeper struct {
 func NewKeeper(_ interface{}, storeKey storetypes.StoreKey) Keeper {
 	return Keeper{
 		storeKey:          storeKey,
+		mu:                &sync.RWMutex{},
 		identityMarkers:   make(map[string]bool),
 		creditCommitments: make(map[string]uint64),
+		creditCMu:         &sync.RWMutex{},
 		nullifierSet:      make(map[string]bool),
+		nullifierMu:       &sync.RWMutex{},
 	}
 }
 

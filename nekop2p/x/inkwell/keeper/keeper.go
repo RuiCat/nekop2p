@@ -35,11 +35,11 @@ import (
 // 使用 SHA256 链式哈希，确保所有节点对同一种子产生相同输出。
 type seedRNG struct {
 	state []byte
-	mu    sync.Mutex
+	mu    *sync.Mutex
 }
 
 func newSeedRNG(seed [32]byte) *seedRNG {
-	return &seedRNG{state: seed[:]}
+	return &seedRNG{state: seed[:], mu: &sync.Mutex{}}
 }
 
 func (r *seedRNG) next32() []byte {
@@ -73,7 +73,7 @@ func (r *seedRNG) Float64() float64 {
 type Keeper struct {
 	storeKey       storetypes.StoreKey
 	activePlans    map[string]*types.FragmentPlan // loanID → plan (内存缓存)
-	plansMu        sync.RWMutex
+	plansMu        *sync.RWMutex
 }
 
 // NewKeeper 创建 Inkwell Keeper。
@@ -81,6 +81,7 @@ func NewKeeper(_ interface{}, storeKey storetypes.StoreKey) Keeper {
 	return Keeper{
 		storeKey:    storeKey,
 		activePlans: make(map[string]*types.FragmentPlan),
+		plansMu:     &sync.RWMutex{},
 	}
 }
 
