@@ -51,7 +51,8 @@ func (ms msgServer) ApproveLoan(goCtx context.Context, msg *types.MsgApproveLoan
 func (ms msgServer) SettleLoan(goCtx context.Context, msg *types.MsgSettleLoan) (*types.MsgSettleLoanResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Phase 4: 验证 ZK 还款证明
+	// ZK 还款证明验证 (Phase 4: gnark 电路就绪后激活)
+	_ = ctx
 
 	if err := ms.k.SettleLoan(ctx, msg.LoanId); err != nil {
 		return nil, err

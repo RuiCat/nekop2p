@@ -126,9 +126,11 @@ func (k Keeper) RegisterUser(ctx sdk.Context, msg *types.MsgRegister) (*types.Br
 		return nil, fmt.Errorf("user already registered: %x", chainID[:8])
 	}
 
-	// ZK 身份证明验证（Phase 2.5: 集成真实 ZK 验证器）
+	// ZK 身份证明验证
 	if len(msg.ZkIdentityProof) > 0 {
-		log.Printf("[brightchain] zk identity proof present for %x (Phase 2.5: integrate verifier)", chainID[:8])
+		// ZK 验证器尚未部署 — 接受证明但记录警告
+		// Phase 2.5: 集成 gnark groth16.Verify
+		log.Printf("[brightchain] WARNING: zk identity proof accepted without verification for %x (Phase 2.5 pending)", chainID[:8])
 	}
 
 	// 邀请凭证验证（非创世阶段需要 ≥3 个有效 Ed25519 签名）

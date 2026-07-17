@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -136,10 +137,9 @@ func (k Keeper) GetAllLoans(ctx sdk.Context) []*types.LoanRecord {
 
 // RequestLoan 创建贷款请求（含 Credit UTXO 花费和 nullifier 检查）。
 func (k Keeper) RequestLoan(ctx sdk.Context, msg *types.MsgRequestLoan) (*types.LoanRecord, error) {
-	// Phase 3.1: 验证信用票据 UTXO
+	// ZK 信用证明验证 (Phase 3.5: gnark 电路就绪后激活)
 	if len(msg.ZkCreditProof) > 0 {
-		// Phase 3.5: 集成 ZK 信用证明验证器
-		// 当前：假定证明已通过外部验证
+		log.Printf("[darkchain] WARNING: zk credit proof accepted without verification for anon %x (Phase 3.5 pending)", msg.BorrowerAnon[:8])
 	}
 
 	// Phase 3.3: 门锁检查（防同一区块自我交易）
@@ -246,7 +246,8 @@ func (k Keeper) CreditTreeRoot() []byte {
 	return []byte(fmt.Sprintf("credit-tree-%d", len(k.creditCommitments)))
 }
 
-// GenerateCreditProof 生成信用证明桩（Phase 3.5: 集成 ZK）。
+// GenerateCreditProof 生成信用证明 (Phase 3.5: 集成 gnark ZK 电路)。
+// 当前返回确定性桩证明，生产环境替换为 Groth16 证明。
 func (k Keeper) GenerateCreditProof(commitment []byte) []byte {
 	k.creditCMu.RLock()
 	defer k.creditCMu.RUnlock()

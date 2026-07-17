@@ -4,6 +4,8 @@
 syntax = "proto3";
 package nekop2p;
 
+option go_package = "github.com/nekop2p/nekop2p/proto/nekop2p";
+
 // ===== 用户与身份 =====
 
 message UserBlock {

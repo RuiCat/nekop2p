@@ -11,6 +11,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"log"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
@@ -45,8 +46,14 @@ func (ms msgServer) Register(goCtx context.Context, msg *types.MsgRegister) (*ty
 func (ms msgServer) Repay(goCtx context.Context, msg *types.MsgRepay) (*types.MsgRepayResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Phase 2.5: 验证 ZK 还款证明
-	// Phase 4: 根据 inkwell_ref 找到对应的暗链贷款并触发结算
+	// ZK 还款证明验证 (Phase 2.5: gnark 电路就绪后激活)
+	if len(msg.ZkRepayProof) > 0 {
+		log.Printf("[brightchain] WARNING: zk repay proof accepted without verification (Phase 2.5 pending)")
+	}
+	// 跨链结算 (Phase 4: 根据 inkwell_ref 触发暗链 SettleLoan)
+	if len(msg.InkwellRef) > 0 {
+		log.Printf("[brightchain] inkwell_ref present: %x (Phase 4: cross-chain settlement pending)", msg.InkwellRef[:8])
+	}
 
 	amount := msg.Amount.Amount.Uint64()
 
