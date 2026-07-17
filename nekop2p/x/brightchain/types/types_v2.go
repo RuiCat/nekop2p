@@ -170,6 +170,7 @@ type MsgRegister struct {
 	ZkIdentityProof []byte   `json:"zk_identity_proof"`
 	GuarantorSigs   [][]byte `json:"guarantor_sigs"`
 	Sender          string   `json:"sender"`
+	Sequence        uint64   `json:"sequence"` // 交易序号 (防重放)
 }
 
 func (msg *MsgRegister) Reset()         {}
@@ -197,11 +198,12 @@ func (m *MsgRegisterResponse) ProtoMessage()  {}
 
 // MsgRepay 还款消息。
 type MsgRepay struct {
-	FromAddress  string `json:"from_address"`
+	FromAddress  string   `json:"from_address"`
 	Amount       sdk.Coin `json:"amount"`
-	ZkRepayProof []byte `json:"zk_repay_proof"`
-	InkwellRef   []byte `json:"inkwell_ref"`
-	Sender       string `json:"sender"`
+	ZkRepayProof []byte   `json:"zk_repay_proof"`
+	InkwellRef   []byte   `json:"inkwell_ref"`
+	Sender       string   `json:"sender"`
+	Sequence     uint64   `json:"sequence"` // 交易序号 (防重放)
 }
 
 func (msg *MsgRepay) Reset()         {}
@@ -250,14 +252,15 @@ func (m *MsgUpdateFriendsResponse) ProtoMessage()  {}
 
 // MsgGuarantee 担保消息。
 type MsgGuarantee struct {
-	Sender             string   `json:"sender"`
-	Inviter            string   `json:"inviter"`
-	Invitee            string   `json:"invitee"`
-	BondNotes          [][]byte `json:"bond_notes"`
+	Sender              string   `json:"sender"`
+	Inviter             string   `json:"inviter"`
+	Invitee             string   `json:"invitee"`
+	BondNotes           [][]byte `json:"bond_notes"`
 	BondNoteCommitments [][]byte `json:"bond_note_commitments"`
-	Coefficient        uint64   `json:"coefficient"`
-	LockPeriodDays     int64    `json:"lock_period_days"`
-	ZkLegitimate       []byte   `json:"zk_legitimate"`
+	Coefficient         uint64   `json:"coefficient"`
+	LockPeriodDays      int64    `json:"lock_period_days"`
+	ZkLegitimate        []byte   `json:"zk_legitimate"`
+	Sequence            uint64   `json:"sequence"` // 交易序号 (防重放)
 }
 
 func (msg *MsgGuarantee) Reset()         {}

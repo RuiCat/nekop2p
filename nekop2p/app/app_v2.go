@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -225,11 +226,23 @@ func (app *NekoApp) EndBlocker(ctx sdk.Context) error {
 }
 
 func (app *NekoApp) processNodeGovernance(ctx sdk.Context) {
+	// 每小时清理过期黑名单
 	if app.currentHeight%1800 == 0 {
-		// 每小时清理过期黑名单
+		if app.VRG.SlashingManager != nil {
+			// Phase 7: 清理 SlashingManager 中的过期条目
+		}
 	}
+	// 每天检查正式节点任期过期
 	if app.currentHeight%43200 == 0 {
-		// 每天检查任期过期
+		users := app.BrightChainKeeper.GetAllUsers(ctx)
+		for _, u := range users {
+			if u.NodeRole == brighttypes.NodeRole_OFFICIAL_RELAY ||
+				u.NodeRole == brighttypes.NodeRole_OFFICIAL_RECORD {
+				if u.NodeTermEnd > 0 && ctx.BlockTime().Unix() > u.NodeTermEnd {
+					app.BrightChainKeeper.SetNodeRole(ctx, u.Address, brighttypes.NodeRole_NONE)
+				}
+			}
+		}
 	}
 }
 
@@ -289,7 +302,65 @@ func (app *NekoApp) processMonthlySalary(ctx sdk.Context) {
 }
 
 func (app *NekoApp) processQuarterlyRotation(ctx sdk.Context) {
-	// Phase 7: 完整季度轮换（排名/末位淘汰/升级）
+	users := app.BrightChainKeeper.GetAllUsers(ctx)
+
+	type ranked struct {
+		addr  string
+		role  brighttypes.NodeRole
+		score uint64
+	}
+	var officials, nonOfficials []ranked
+
+	for _, u := range users {
+		app.npMu.Lock()
+		stats := app.nodePerformance[u.Address]
+		app.npMu.Unlock()
+
+		onlineRate := 0.5
+		relayScore := uint64(0)
+		if stats != nil && stats.TotalBlocks > 0 {
+			onlineRate = float64(stats.OnlineBlocks) / float64(stats.TotalBlocks)
+			relayScore = stats.RelayCount
+		}
+
+		r := ranked{addr: u.Address, role: u.NodeRole}
+		r.score = uint64(float64(u.TrustWeight)*0.4 + onlineRate*float64(u.TrustWeight)*0.3 + float64(relayScore)*0.3)
+
+		if u.NodeRole == brighttypes.NodeRole_OFFICIAL_RELAY ||
+			u.NodeRole == brighttypes.NodeRole_OFFICIAL_RECORD {
+			officials = append(officials, r)
+		} else if u.NodeRole != brighttypes.NodeRole_NONE {
+			nonOfficials = append(nonOfficials, r)
+		}
+	}
+
+	// 末位 10% 降级
+	if len(officials) >= 10 {
+		demoteCount := len(officials) / 10
+		if demoteCount < 1 {
+			demoteCount = 1
+		}
+		// 按评分排序
+		sort.Slice(officials, func(i, j int) bool { return officials[i].score > officials[j].score })
+		for i := len(officials) - demoteCount; i < len(officials); i++ {
+			app.BrightChainKeeper.SetNodeRole(ctx, officials[i].addr, brighttypes.NodeRole_NONE)
+		}
+	}
+
+	// 非正式节点前 10% 升级
+	if len(nonOfficials) >= 10 {
+		promoteCount := len(nonOfficials) / 10
+		if promoteCount < 1 {
+			promoteCount = 1
+		}
+		sort.Slice(nonOfficials, func(i, j int) bool { return nonOfficials[i].score > nonOfficials[j].score })
+		for i := 0; i < promoteCount && i < len(nonOfficials); i++ {
+			app.BrightChainKeeper.SetNodeRole(ctx, nonOfficials[i].addr, brighttypes.NodeRole_OFFICIAL_RELAY)
+		}
+	}
+
+	// 重置表现统计
+	app.nodePerformance = make(map[string]*NodeStats)
 }
 
 // ============================================================
@@ -300,13 +371,12 @@ func (app *NekoApp) processQuarterlyRotation(ctx sdk.Context) {
 func (app *NekoApp) RegisterGame(gameID, author, name string, feeRate, authorShare, serverShare uint64) {
 	app.gamesMu.Lock()
 	defer app.gamesMu.Unlock()
-	app.gameEngines[gameID] = nil // Phase F: 完整 GameStateMachine
 
 	poolShare := uint64(100) - authorShare - serverShare
-	_ = poolShare
+	app.gameEngines[gameID] = struct{}{} // Phase F: GameStateMachine 实例
 
-	fmt.Printf("[game] 新游戏: %s 作者=%.8s 分成 %d/%d/%d\n",
-		name, author, authorShare, serverShare, 100-authorShare-serverShare)
+	fmt.Printf("[game] 新游戏: %s 作者=%.8s 分账 作者:%d%% 服务器:%d%% 池:%d%%\n",
+		name, author, authorShare, serverShare, poolShare)
 }
 
 // BindGameServer 节点注册为游戏服务器。
@@ -328,17 +398,14 @@ func (app *NekoApp) RecordGameTx(gameID, serverAddr, txType string, feeAmount ui
 		return
 	}
 
-	// 默认分账: 作者30% 服务器50% 基础设施20%
-	authorFee := feeAmount * 30 / 100
-	serverFee := feeAmount * 50 / 100
-	poolFee := feeAmount - authorFee - serverFee
-
-	_ = authorFee
-	_ = serverFee
-	_ = poolFee
+	// 三路分账: 作者30% 服务器50% 基础设施20%
+	_ = serverAddr
 	_ = txType
 	_ = customData
-	_ = serverAddr
+
+	// Phase F: 需要 SDK Context 来持久化分账
+	// 当前在 BeginBlocker/EndBlocker 中通过 CollectFees 处理
+	fmt.Printf("[game] tx: game=%s fee=%d\n", gameID[:8], feeAmount)
 }
 
 // ============================================================

@@ -38,20 +38,24 @@ func NekoAnteHandler(bk brightkeeper.Keeper) sdk.AnteHandler {
 
 		for _, msg := range tx.GetMsgs() {
 			var sender string
+			var expectedSeq uint64
 
 			switch m := msg.(type) {
 			case *brighttypes.MsgRegister:
 				sender = string(m.SendPk)
+				expectedSeq = m.Sequence
 				if err := checkRegistration(ctx, bk, m); err != nil {
 					return ctx, err
 				}
 			case *brighttypes.MsgRepay:
 				sender = m.FromAddress
+				expectedSeq = m.Sequence
 				if err := checkRepay(ctx, bk, m); err != nil {
 					return ctx, err
 				}
 			case *brighttypes.MsgGuarantee:
 				sender = m.Inviter
+				expectedSeq = m.Sequence
 				if err := checkGuarantee(ctx, bk, m); err != nil {
 					return ctx, err
 				}
@@ -63,7 +67,7 @@ func NekoAnteHandler(bk brightkeeper.Keeper) sdk.AnteHandler {
 
 			// 序列号检查（防重放）
 			if sender != "" {
-				if err := checkSequence(ctx, bk, sender); err != nil {
+				if err := checkSequence(ctx, bk, sender, expectedSeq); err != nil {
 					return ctx, err
 				}
 			}
@@ -74,14 +78,16 @@ func NekoAnteHandler(bk brightkeeper.Keeper) sdk.AnteHandler {
 }
 
 // checkSequence 验证发送者链上 Sequence（防重放）。
-// 交易中携带的 expectedSequence 必须等于链上当前值+1。
-func checkSequence(ctx sdk.Context, bk brightkeeper.Keeper, sender string) error {
+// 交易中携带的 expectedSequence 必须 > 链上当前值。
+func checkSequence(ctx sdk.Context, bk brightkeeper.Keeper, sender string, expectedSeq uint64) error {
+	if expectedSeq == 0 {
+		return nil // 注册交易不检查 Sequence
+	}
 	currentSeq := bk.GetSequence(ctx, sender)
-	// 预期下一笔交易的序列号 = 当前值 + 1
-	// 注册交易时 sequence=0（新用户），首次交易 sequence=1
-	_ = currentSeq
-	// Phase 2: 交易需要携带 expectedSequence 字段，
-	// 验证 expectedSequence == currentSeq + 1
+	if expectedSeq <= currentSeq {
+		return fmt.Errorf("replay rejected: tx seq=%d <= chain seq=%d for %s",
+			expectedSeq, currentSeq, sender[:16])
+	}
 	return nil
 }
 

@@ -358,7 +358,21 @@ func (k Keeper) advanceCycle(ctx sdk.Context) {
 }
 
 func (k Keeper) checkOverdueLoans(ctx sdk.Context) {
-	// Phase 3.4: 逾期贷款触发递归追偿（跨模块桥接到明链）
+	now := ctx.BlockTime().Unix()
+	for _, loan := range k.GetAllLoans(ctx) {
+		if loan.Status == types.LoanStatus_APPROVED && now > loan.DueAt {
+			loan.Status = types.LoanStatus_DEFAULTED
+			if err := k.SetLoan(ctx, loan); err != nil {
+				continue
+			}
+			ctx.EventManager().EmitEvent(sdk.NewEvent(
+				"darkchain.loan_defaulted",
+				sdk.NewAttribute("loan_id", fmt.Sprintf("%x", loan.LoanId[:8])),
+				sdk.NewAttribute("amount", fmt.Sprintf("%d", loan.Amount)),
+				sdk.NewAttribute("borrower_anon", fmt.Sprintf("%x", loan.BorrowerAnon[:8])),
+			))
+		}
+	}
 }
 
 // ============================================================
