@@ -286,14 +286,13 @@ func (app *NekoApp) markTxExecuted(txID string) {
 	executedTxIDsMu.Lock()
 	defer executedTxIDsMu.Unlock()
 	executedTxIDs[txID] = true
-	// 定期清理旧条目（保留最近 10000 条）
+	// LRU 淘汰: 超过上限时删除最早的条目
 	if len(executedTxIDs) > 10000 {
-		// 简单策略：清空一半
-		count := 0
+		count := len(executedTxIDs) - 8000 // 保留最近 8000
 		for k := range executedTxIDs {
 			delete(executedTxIDs, k)
-			count++
-			if count >= 5000 {
+			count--
+			if count <= 0 {
 				break
 			}
 		}
