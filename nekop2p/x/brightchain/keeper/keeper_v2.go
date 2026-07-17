@@ -33,10 +33,13 @@ type Keeper struct {
 	storeKey storetypes.StoreKey
 
 	// Phase 2: 延期追偿（内联实现）
-	provisions     map[string]*DeferredProvision // provisionID → provision
+	provisions     map[string]*DeferredProvision
 	currentEpoch   int64
-	epochHeight    int64 // 当前 Epoch 起始高度
+	epochHeight    int64
 	blocksPerEpoch int64
+
+	// Staking 系统
+	staking *StakingState
 }
 
 // NewKeeper 创建新的明链 Keeper。
