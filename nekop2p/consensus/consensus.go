@@ -39,17 +39,18 @@ type Engine interface {
 
 // BlockEvent 表示一个新区块事件。
 type BlockEvent struct {
-	Height    int64
-	BlockHash [32]byte
-	Txs       [][]byte
-	Timestamp time.Time
+	Height        int64
+	BlockHash     [32]byte
+	PrevBlockHash [32]byte // 前一个区块哈希（链式结构）
+	Txs           [][]byte
+	Timestamp     time.Time
 }
 
-// SimpleEngine 是一个简单的单节点共识引擎（Phase 1 用）。
-// 它按固定间隔出块，不需要多节点共识。
+// SimpleEngine 是一个简单的单节点共识引擎。
 type SimpleEngine struct {
-	mu          sync.Mutex // 保护 height/stopped/started
+	mu          sync.Mutex
 	height      int64
+	lastHash    [32]byte // 上一个区块哈希
 	interval    time.Duration
 	blockCh     chan BlockEvent
 	stopCh      chan struct{}
@@ -117,10 +118,17 @@ func (e *SimpleEngine) ProposeBlock(txs [][]byte) ([]byte, int64, error) {
 }
 
 func (e *SimpleEngine) CommitBlock(blockData []byte, height int64) error {
+	blockHash := sha256.Sum256(blockData)
+	e.mu.Lock()
+	prevHash := e.lastHash
+	e.lastHash = blockHash
+	e.mu.Unlock()
 	select {
 	case e.blockCh <- BlockEvent{
-		Height:    height,
-		Timestamp: time.Now(),
+		Height:        height,
+		BlockHash:     blockHash,
+		PrevBlockHash: prevHash,
+		Timestamp:     time.Now(),
 	}:
 	default:
 		// 消费者过慢：丢弃事件而非阻塞 loop

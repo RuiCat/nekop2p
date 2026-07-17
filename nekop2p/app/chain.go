@@ -308,6 +308,20 @@ func ResetReplayCache() {
 	executedTxIDs = make(map[string]bool)
 }
 
+// isTxReplay 检查交易 ID 是否已被执行（线程安全）。
+func isTxReplaySafe(txID string) bool {
+	executedTxIDsMu.Lock()
+	defer executedTxIDsMu.Unlock()
+	return executedTxIDs[txID]
+}
+
+// markTxExecutedSafe 标记交易 ID 为已执行（线程安全）。
+func markTxExecutedSafe(txID string) {
+	executedTxIDsMu.Lock()
+	defer executedTxIDsMu.Unlock()
+	executedTxIDs[txID] = true
+}
+
 // ed25519Verify 验证 Ed25519 签名（链上验证辅助）。
 func ed25519Verify(pubKey, message, sig []byte) bool {
 	if len(sig) != 64 || len(pubKey) != 32 {

@@ -156,11 +156,9 @@ func (app *NekoApp) EndBlocker(ctx brighttypes.Context) {
 	// 4. 重新计算信任权重
 	app.recalculateTrustWeights(ctx)
 
-	// 5. 持久化区块高度（每 100 个区块写一次，避免频繁 I/O）
-	if app.currentHeight%100 == 0 {
-		app.BrightChainKeeper.SetHeight(app.currentHeight)
-		app.DarkChainKeeper.SetHeight(app.currentHeight)
-	}
+	// 5. 持久化区块高度（每区块持久化，防止崩溃丢失）
+	app.BrightChainKeeper.SetHeight(app.currentHeight)
+	app.DarkChainKeeper.SetHeight(app.currentHeight)
 
 	// 6. VRG 纪元推进（每个区块）
 	app.EpochTick(app.currentHeight)
