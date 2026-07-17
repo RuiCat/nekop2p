@@ -54,39 +54,20 @@ func GenerateTxID(regionID string, seq uint64) string {
 
 // ProcessLocalTx 处理同区域交易 (事务级锁, 并发安全)。
 func ProcessLocalTx(r *RegionNode, from, to string, amount uint64) (*Transaction, error) {
-	r.chainMu.Lock()
-	defer r.chainMu.Unlock()
-
-	if err := r.LockBalance(from, amount); err != nil {
-		return nil, fmt.Errorf("lock balance: %w", err)
-	}
-
-	r.TxSeq++
-	seq := r.TxSeq
-
-	tx := &Transaction{
-		From:      from,
-		To:        to,
-		Amount:    amount,
-		Seq:       seq,
-		RegionID:  r.RegionID,
-		FromNode:  r.RegionID,
-		ToNode:    r.RegionID,
-		Status:    TxLocked,
-		CreatedAt: time.Now().Unix(),
-	}
-	tx.ID = GenerateTxID(r.RegionID, seq)
-	return tx, nil
+	return ExecuteLocalTx(r, from, to, amount, DefaultFeeParams())
 }
-
 // ExecuteLocalTx 原子执行同区域交易 (推荐)。
 // 在 chainMu 锁内完成锁余额→分配序号→解锁→转账，保证并发安全。
-func ExecuteLocalTx(r *RegionNode, from, to string, amount uint64) (*Transaction, error) {
+func ExecuteLocalTx(r *RegionNode, from, to string, amount uint64, feeParams FeeParams) (*Transaction, error) {
 	r.chainMu.Lock()
 	defer r.chainMu.Unlock()
 
-	// 1. 锁余额
-	if err := r.LockBalance(from, amount); err != nil {
+	// 0. 计算处理费
+	fee := feeParams.CalcLocalFee(amount)
+	totalDeduct := amount + fee
+
+	// 1. 锁余额 (含处理费)
+	if err := r.LockBalance(from, totalDeduct); err != nil {
 		return nil, fmt.Errorf("lock: %w", err)
 	}
 
@@ -94,13 +75,14 @@ func ExecuteLocalTx(r *RegionNode, from, to string, amount uint64) (*Transaction
 	r.TxSeq++
 	seq := r.TxSeq
 
-	// 3. 解锁并转账
-	if err := r.UnlockBalance(from, amount); err != nil {
+	// 3. 解锁: from扣总额, to收本金, 节点收处理费
+	if err := r.UnlockBalance(from, totalDeduct); err != nil {
 		return nil, fmt.Errorf("unlock: %w", err)
 	}
 	if err := r.CreditBalance(to, amount); err != nil {
 		return nil, fmt.Errorf("credit: %w", err)
 	}
+	r.Earnings += fee
 
 	tx := &Transaction{
 		ID:         GenerateTxID(r.RegionID, seq),
@@ -177,9 +159,11 @@ type CrossRegionResponse struct {
 }
 
 // InitiateCrossRegion 发起跨区交易 (Phase 1-2: A→RA₁ 申请)。
-func InitiateCrossRegion(fromNode *RegionNode, toNodeID, from, to string, amount uint64) (*Transaction, *CrossRegionRequest, error) {
-	// Step 1: 锁定发起方余额
-	if err := fromNode.LockBalance(from, amount); err != nil {
+func InitiateCrossRegion(fromNode *RegionNode, toNodeID, from, to string, amount uint64, feeParams FeeParams) (*Transaction, *CrossRegionRequest, error) {
+	// Step 1: 锁定发起方余额 (含跨区费)
+	crossFee := feeParams.CalcCrossFee(amount)
+	totalLock := amount + crossFee
+	if err := fromNode.LockBalance(from, totalLock); err != nil {
 		return nil, nil, err
 	}
 
@@ -243,9 +227,14 @@ func VerifyCrossRegion(toNode *RegionNode, req *CrossRegionRequest) *CrossRegion
 }
 
 // FinalizeCrossRegion 完成跨区交易 (Phase 4: 双方结算)。
-func FinalizeCrossRegion(fromNode, toNode *RegionNode, tx *Transaction) error {
-	// 解锁发起方
-	if err := fromNode.UnlockBalance(tx.From, tx.Amount); err != nil {
+func FinalizeCrossRegion(fromNode, toNode *RegionNode, tx *Transaction, feeParams FeeParams) error {
+	// 跨区费: 双方节点平分
+	crossFee := feeParams.CalcCrossFee(tx.Amount)
+	halfFee := crossFee / 2
+
+	// 解锁发起方 (扣总额=本金+跨区费)
+	totalDeduct := tx.Amount + crossFee
+	if err := fromNode.UnlockBalance(tx.From, totalDeduct); err != nil {
 		tx.Status = TxFailed
 		return err
 	}
@@ -254,6 +243,9 @@ func FinalizeCrossRegion(fromNode, toNode *RegionNode, tx *Transaction) error {
 		tx.Status = TxFailed
 		return err
 	}
+	// 双方节点各得一半跨区费
+	fromNode.AddCrossEarnings(halfFee)
+	toNode.AddCrossEarnings(crossFee - halfFee) // 余数归接收方节点
 	tx.Status = TxConfirmed
 	tx.ConfirmedAt = time.Now().Unix()
 

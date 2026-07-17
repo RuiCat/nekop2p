@@ -60,6 +60,31 @@ func (n *Node) InitRegionNodes(coord region.SpatialCoord, startBalance uint64) {
 	go n.regionNodes.Grid2.ProcessLoop()
 }
 
+// PauseRegionNodes 暂停区域节点（节点离线/降级时调用）。
+func (n *Node) PauseRegionNodes() {
+	if n.regionNodes == nil { return }
+	n.regionNodes.Grid1.Pause()
+	n.regionNodes.Grid2.Pause()
+	log.Printf("[region] 区域节点已暂停")
+}
+
+// ResumeRegionNodes 恢复区域节点（节点重新上线时调用）。
+func (n *Node) ResumeRegionNodes() {
+	if n.regionNodes == nil { return }
+	n.regionNodes.Grid1.Resume()
+	n.regionNodes.Grid2.Resume()
+	log.Printf("[region] 区域节点已恢复")
+}
+
+// SaveRegionSnapshots 保存区域节点快照（关闭/降级前调用）。
+func (n *Node) SaveRegionSnapshots() []*region.SnapshotData {
+	if n.regionNodes == nil { return nil }
+	return []*region.SnapshotData{
+		n.regionNodes.Grid1.SaveSnapshot(),
+		n.regionNodes.Grid2.SaveSnapshot(),
+	}
+}
+
 // ============================================================
 // 成员管理
 // ============================================================
@@ -100,7 +125,7 @@ func (n *Node) SubmitRegionTx(from, to string, amount uint64, toNodeID string) (
 
 	if toInGrid1 {
 		// 同区域交易 (两者都在网格1)
-		tx, err := region.ExecuteLocalTx(rn, from, to, amount)
+		tx, err := region.ExecuteLocalTx(rn, from, to, amount, region.DefaultFeeParams())
 		if err != nil {
 			return "", err
 		}
@@ -109,7 +134,7 @@ func (n *Node) SubmitRegionTx(from, to string, amount uint64, toNodeID string) (
 
 	// 跨区域交易
 	if toInGrid2 {
-		tx, req, err := region.InitiateCrossRegion(rn, n.regionNodes.Grid2.RegionID, from, to, amount)
+		tx, req, err := region.InitiateCrossRegion(rn, n.regionNodes.Grid2.RegionID, from, to, amount, region.DefaultFeeParams())
 		if err != nil {
 			return "", err
 		}
@@ -120,14 +145,14 @@ func (n *Node) SubmitRegionTx(from, to string, amount uint64, toNodeID string) (
 			return "", fmt.Errorf("cross-region rejected: %s", resp.Reason)
 		}
 
-		if err := region.FinalizeCrossRegion(rn, n.regionNodes.Grid2, tx); err != nil {
+		if err := region.FinalizeCrossRegion(rn, n.regionNodes.Grid2, tx, region.DefaultFeeParams()); err != nil {
 			return "", err
 		}
 		return tx.ID, nil
 	}
 
 	// 对方不在本节点的任何区域中 → 需要转发到对方区域节点
-	tx, req, err := region.InitiateCrossRegion(rn, toNodeID, from, to, amount)
+	tx, req, err := region.InitiateCrossRegion(rn, toNodeID, from, to, amount, region.DefaultFeeParams())
 	if err != nil {
 		return "", err
 	}

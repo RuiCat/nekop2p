@@ -112,21 +112,26 @@ func TestLocalTransaction(t *testing.T) {
 	rn.AddMember("alice", 1000, region.SpatialCoord{}, "other")
 	rn.AddMember("bob", 500, region.SpatialCoord{}, "other")
 
+	// ProcessLocalTx 现在是原子操作 (含处理费)
 	tx, err := region.ProcessLocalTx(rn, "alice", "bob", 200)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if tx.Status != region.TxLocked {
-		t.Errorf("expected Locked, got %d", tx.Status)
-	}
-
-	// 完成交易
-	if err := region.FinalizeLocalTx(rn, tx); err != nil {
 		t.Fatal(err)
 	}
 	if tx.Status != region.TxConfirmed {
 		t.Errorf("expected Confirmed, got %d", tx.Status)
 	}
+
+	// 验证余额: alice扣了200+处理费, bob收了200
+	aliceBal, _ := rn.GetBalance("alice")
+	bobBal, _ := rn.GetBalance("bob")
+	fee := region.DefaultFeeParams().CalcLocalFee(200)
+	if aliceBal != 1000-200-fee {
+		t.Errorf("alice: expected %d, got %d", 1000-200-fee, aliceBal)
+	}
+	if bobBal < 700 {
+		t.Errorf("bob: expected >=700, got %d", bobBal)
+	}
+	t.Logf("alice=%d bob=%d fee=%d", aliceBal, bobBal, fee)
 }
 
 func TestCrossRegionTransaction(t *testing.T) {
@@ -137,7 +142,7 @@ func TestCrossRegionTransaction(t *testing.T) {
 	rb.AddMember("bob", 500, region.SpatialCoord{X: 3, Y: 3}, "R1-grid1")
 
 	// Phase 1-2: 发起
-	tx, req, err := region.InitiateCrossRegion(ra, rb.RegionID, "alice", "bob", 300)
+	tx, req, err := region.InitiateCrossRegion(ra, rb.RegionID, "alice", "bob", 300, region.DefaultFeeParams())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +157,7 @@ func TestCrossRegionTransaction(t *testing.T) {
 	}
 
 	// Phase 4: 结算
-	if err := region.FinalizeCrossRegion(ra, rb, tx); err != nil {
+	if err := region.FinalizeCrossRegion(ra, rb, tx, region.DefaultFeeParams()); err != nil {
 		t.Fatal(err)
 	}
 	if tx.Status != region.TxConfirmed {

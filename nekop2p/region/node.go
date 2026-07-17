@@ -42,6 +42,11 @@ type RegionNode struct {
 	Shadow     *RegionNode  // 影子候补
 	lastBeat   time.Time
 	isActive   bool
+
+	// 收入追踪
+	Earnings       uint64  // 累计交易处理费收入
+	CrossEarnings  uint64  // 跨区协调费收入
+	BatchFeesPaid  uint64  // 支付给全局链的记录费
 }
 
 // MemberState 区域成员状态。
@@ -182,8 +187,145 @@ func (rn *RegionNode) CreditBalance(chainID string, amount uint64) error {
 }
 
 // ============================================================
-// 故障转移
+// 费用参数
 // ============================================================
+
+// FeeParams 区域节点费用参数 (治理可调)。
+type FeeParams struct {
+	LocalTxRate      uint64 // 同区域交易费率 (基点, 默认 10 = 0.1%)
+	CrossTxRate      uint64 // 跨区域交易费率 (基点, 默认 50 = 0.5%)
+	BatchSubmitFee   uint64 // 批量提交到全局链的费用 (默认 100)
+	GlobalChainShare uint64 // 全局链记录费占比 (%, 默认 20)
+}
+
+// DefaultFeeParams 默认费用参数。
+func DefaultFeeParams() FeeParams {
+	return FeeParams{
+		LocalTxRate:      10,   // 0.1%
+		CrossTxRate:      50,   // 0.5%
+		BatchSubmitFee:   100,  // 100 uneko/批次
+		GlobalChainShare: 20,   // 20% 归全局链
+	}
+}
+
+// CalcLocalFee 计算同区域交易处理费。
+func (fp FeeParams) CalcLocalFee(amount uint64) uint64 {
+	return amount * fp.LocalTxRate / 10000
+}
+
+// CalcCrossFee 计算跨区域交易处理费。
+func (fp FeeParams) CalcCrossFee(amount uint64) uint64 {
+	return amount * fp.CrossTxRate / 10000
+}
+
+// ============================================================
+// 收入操作
+// ============================================================
+
+// AddEarnings 增加交易处理费收入。
+func (rn *RegionNode) AddEarnings(amount uint64) {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	rn.Earnings += amount
+}
+
+// AddCrossEarnings 增加跨区协调费收入。
+func (rn *RegionNode) AddCrossEarnings(amount uint64) {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	rn.CrossEarnings += amount
+}
+
+// PayBatchFee 支付批量提交费给全局链。
+func (rn *RegionNode) PayBatchFee(amount uint64) {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	rn.BatchFeesPaid += amount
+}
+
+// GetRevenue 获取净收入 = 处理费 + 跨区费 - 记录费。
+func (rn *RegionNode) GetRevenue() uint64 {
+	rn.mu.RLock()
+	defer rn.mu.RUnlock()
+	total := rn.Earnings + rn.CrossEarnings
+	if total > rn.BatchFeesPaid {
+		return total - rn.BatchFeesPaid
+	}
+	return 0
+}
+
+
+// ============================================================
+// 状态快照 — 持久化与恢复
+// ============================================================
+
+// SnapshotData 可序列化的快照数据。
+type SnapshotData struct {
+	RegionID     string            `json:"region_id"`
+	GridIndex    int               `json:"grid_index"`
+	Members      map[string]uint64 `json:"members"`
+	TxSeq        uint64            `json:"tx_seq"`
+	Earnings     uint64            `json:"earnings"`
+	CrossEarnings uint64           `json:"cross_earnings"`
+	BatchFeesPaid uint64           `json:"batch_fees_paid"`
+}
+
+// SaveSnapshot 导出可持久化的快照。
+func (rn *RegionNode) SaveSnapshot() *SnapshotData {
+	rn.mu.RLock()
+	defer rn.mu.RUnlock()
+	rn.chainMu.RLock()
+	defer rn.chainMu.RUnlock()
+	members := make(map[string]uint64, len(rn.Members))
+	for id, m := range rn.Members { members[id] = m.Balance }
+	return &SnapshotData{
+		RegionID: rn.RegionID, GridIndex: rn.GridIndex,
+		Members: members, TxSeq: rn.TxSeq,
+		Earnings: rn.Earnings, CrossEarnings: rn.CrossEarnings,
+		BatchFeesPaid: rn.BatchFeesPaid,
+	}
+}
+
+// LoadSnapshot 从快照恢复状态。
+func (rn *RegionNode) LoadSnapshot(snap *SnapshotData) {
+	rn.mu.Lock(); defer rn.mu.Unlock()
+	rn.chainMu.Lock(); defer rn.chainMu.Unlock()
+	rn.TxSeq = snap.TxSeq
+	rn.Earnings = snap.Earnings
+	rn.CrossEarnings = snap.CrossEarnings
+	rn.BatchFeesPaid = snap.BatchFeesPaid
+	for id, bal := range snap.Members {
+		rn.Members[id] = &MemberState{ChainID: id, Balance: bal}
+	}
+}
+
+// Pause 暂停区域节点服务 (节点离线/降级时调用)。
+func (rn *RegionNode) Pause() {
+	rn.mu.Lock(); defer rn.mu.Unlock()
+	rn.isActive = false
+}
+
+// Resume 恢复区域节点服务 (节点重新上线时调用)。
+func (rn *RegionNode) Resume() {
+	rn.mu.Lock(); defer rn.mu.Unlock()
+	rn.isActive = true; rn.lastBeat = time.Now()
+}
+
+// MonthlySettle 月度结算: 返回净收入并重置计数器。
+func (rn *RegionNode) MonthlySettle() uint64 {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	revenue := rn.Earnings + rn.CrossEarnings
+	if revenue > rn.BatchFeesPaid {
+		revenue -= rn.BatchFeesPaid
+	} else {
+		revenue = 0
+	}
+	rn.Earnings = 0
+	rn.CrossEarnings = 0
+	rn.BatchFeesPaid = 0
+	return revenue
+}
 
 // Heartbeat 发送心跳。
 func (rn *RegionNode) Heartbeat() {

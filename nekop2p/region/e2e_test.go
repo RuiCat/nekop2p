@@ -40,7 +40,7 @@ func TestE2E_LocalTransactions(t *testing.T) {
 		to := fmt.Sprintf("user-%d", (i+1)%10)
 		amount := uint64(10 + i%50)
 
-		_, err := region.ExecuteLocalTx(rn, from, to, amount)
+		_, err := region.ExecuteLocalTx(rn, from, to, amount, region.DefaultFeeParams())
 		if err != nil {
 			t.Logf("tx %d failed (expected for insufficient balance): %v", i, err)
 		}
@@ -85,7 +85,7 @@ func TestE2E_CrossRegionTransactions(t *testing.T) {
 	// 执行 5 笔跨区交易
 	crossTxs := 0
 	for i := 0; i < 5; i++ {
-		tx, req, err := region.InitiateCrossRegion(ra, rb.RegionID, "alice", "bob", uint64(100+i*50))
+		tx, req, err := region.InitiateCrossRegion(ra, rb.RegionID, "alice", "bob", uint64(100+i*50), region.DefaultFeeParams())
 		if err != nil {
 			t.Logf("cross tx %d init failed: %v", i, err)
 			continue
@@ -97,7 +97,7 @@ func TestE2E_CrossRegionTransactions(t *testing.T) {
 			continue
 		}
 
-		if err := region.FinalizeCrossRegion(ra, rb, tx); err != nil {
+		if err := region.FinalizeCrossRegion(ra, rb, tx, region.DefaultFeeParams()); err != nil {
 			t.Errorf("cross tx %d finalize: %v", i, err)
 			continue
 		}
@@ -218,7 +218,7 @@ func TestE2E_BatchCommit(t *testing.T) {
 		to := fmt.Sprintf("user-%d", (i+1)%5)
 		amount := uint64(10 + i)
 
-		_, err := region.ExecuteLocalTx(rn, from, to, amount)
+		_, err := region.ExecuteLocalTx(rn, from, to, amount, region.DefaultFeeParams())
 		if err == nil {
 			txCount++
 		}
@@ -255,7 +255,7 @@ func TestE2E_ConcurrentSafety(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			amount := uint64(10 + idx%50)
-			_, err := region.ExecuteLocalTx(rn, "alice", "bob", amount)
+			_, err := region.ExecuteLocalTx(rn, "alice", "bob", amount, region.DefaultFeeParams())
 			if err != nil {
 				select {
 				case errors <- err:
@@ -306,7 +306,7 @@ func TestE2E_Performance(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		from := fmt.Sprintf("user-%d", i)
 		to := fmt.Sprintf("user-%d", i+1)
-		_, _ = region.ExecuteLocalTx(rn, from, to, 10)
+		_, _ = region.ExecuteLocalTx(rn, from, to, 10, region.DefaultFeeParams())
 	}
 
 	// 计时: 1000 笔同区域交易
