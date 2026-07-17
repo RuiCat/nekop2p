@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 )
@@ -136,7 +137,7 @@ func (vs *ValidatorSet) GetProposer(height int64) *ValidatorInfo {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
 
-	// 收集有序的公钥列表
+	// 收集排序后的公钥列表（消除 map 随机化）
 	var keys [][32]byte
 	for k := range vs.validators {
 		keys = append(keys, k)
@@ -144,6 +145,13 @@ func (vs *ValidatorSet) GetProposer(height int64) *ValidatorInfo {
 	if len(keys) == 0 {
 		return nil
 	}
+	// 排序确保所有节点对同一高度选出相同提议者
+	sort.Slice(keys, func(i, j int) bool {
+		for x := 0; x < 32; x++ {
+			if keys[i][x] != keys[j][x] { return keys[i][x] < keys[j][x] }
+		}
+		return false
+	})
 
 	// 轮询选择
 	idx := int(height) % len(keys)
