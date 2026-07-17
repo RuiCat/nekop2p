@@ -27,6 +27,7 @@
   <img src="https://img.shields.io/badge/license-CC0%201.0-lightgrey" alt="license">
   <img src="https://img.shields.io/badge/tests-60%2F60%20passing-success" alt="tests">
   <img src="https://img.shields.io/badge/race-0%20warnings-success" alt="race">
+  <img src="https://img.shields.io/badge/vet-0%20warnings-success" alt="vet">
   <img src="https://img.shields.io/badge/build-dual%20mode-blueviolet" alt="build">
 </p>
 
